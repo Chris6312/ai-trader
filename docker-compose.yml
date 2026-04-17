@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai_trader_v1_postgres
+    environment:
+      POSTGRES_DB: ai_trader_v1
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ai_trader_v1_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: ai_trader_v1_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ai_trader_v1_redis_data:/data
+
+volumes:
+  ai_trader_v1_postgres_data:
+  ai_trader_v1_redis_data:
