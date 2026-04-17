@@ -35,14 +35,17 @@ export function AppShell({
           .filter(Boolean)
           .join(' ')}
       >
-        <div className="sidebar__brand">
-          <div className="brand-mark">AI</div>
-          {!sidebarCollapsed ? (
-            <div>
-              <p className="eyebrow">Paper cockpit</p>
-              <h1>AI-Trader v1</h1>
-            </div>
-          ) : null}
+        <div className="sidebar__brand-wrap">
+          <div className="sidebar__brand">
+            <div className="brand-mark">AI</div>
+            {!sidebarCollapsed ? (
+              <div>
+                <p className="eyebrow">Paper cockpit</p>
+                <h1>AI-Trader v1</h1>
+              </div>
+            ) : null}
+          </div>
+          {!sidebarCollapsed ? <span className="status-pill status-pill--good">Paper environment</span> : null}
         </div>
 
         <nav className="sidebar__nav" aria-label="Primary">
@@ -72,9 +75,9 @@ export function AppShell({
         <div className="sidebar__footer panel panel--soft">
           {!sidebarCollapsed ? (
             <>
-              <p className="eyebrow">Phase 5</p>
+              <p className="eyebrow">Phase 6</p>
               <p className="muted copy-block">
-                App shell first, then richer account tables and operator controls.
+                Working cockpit views for balances, positions, orders, and operator controls.
               </p>
             </>
           ) : null}
@@ -93,7 +96,7 @@ export function AppShell({
               {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
             </button>
             <div>
-              <p className="eyebrow">Frontend app shell</p>
+              <p className="eyebrow">Paper broker views</p>
               <h2>{route.label}</h2>
             </div>
           </div>
@@ -103,6 +106,7 @@ export function AppShell({
               <Search size={16} />
               <span>Command/search rail coming in later phases</span>
             </div>
+            <span className="status-pill">America/New_York</span>
             <span className="status-pill status-pill--good">Paper mode</span>
           </div>
         </header>

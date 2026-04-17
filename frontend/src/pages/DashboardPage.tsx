@@ -1,61 +1,54 @@
-import { useQuery } from '@tanstack/react-query'
 import { Activity, ArrowRightLeft, Coins, ShieldCheck } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 
 import { fetchPaperAccountSummaries } from '../api/paperAccounts'
+import { QueryState } from '../components/QueryState'
 import { PageSection } from '../components/PageSection'
 import { SummaryCard } from '../components/SummaryCard'
-
-function formatMoney(value: string): string {
-  const numericValue = Number(value)
-  return Number.isFinite(numericValue)
-    ? numericValue.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 2,
-      })
-    : value
-}
+import { formatMoney, formatSignedMoney, formatTimestamp } from '../lib/formatters'
 
 export function DashboardPage() {
   const summaryQuery = useQuery({
     queryKey: ['paper-account-summaries'],
     queryFn: fetchPaperAccountSummaries,
+    refetchInterval: 15_000,
   })
 
   const summaries = summaryQuery.data ?? []
   const totalEquity = summaries.reduce((sum, item) => sum + Number(item.equity), 0)
   const totalOpenOrders = summaries.reduce((sum, item) => sum + item.open_order_count, 0)
   const totalPositions = summaries.reduce((sum, item) => sum + item.position_count, 0)
+  const totalUnrealized = summaries.reduce((sum, item) => sum + Number(item.unrealized_pnl), 0)
 
   return (
     <div className="page-grid">
       <PageSection
         eyebrow="Overview"
         title="Operator dashboard"
-        description="A clean launchpad for the paper broker cockpit. This shell borrows the best habits from your other frontend: strong hierarchy, compact telemetry, and room for drawers and detail panes later."
+        description="A compact launchpad for the paper broker cockpit. Keep the home view light, keep the detail lanes on their own pages, and let the most important paper-account signals rise to the top."
       >
-        <div className="summary-grid">
+        <div className="summary-grid summary-grid--hero">
           <SummaryCard
             label="Combined equity"
-            value={formatMoney(String(totalEquity))}
+            value={formatMoney(totalEquity)}
             tone="good"
-            detail="Aggregated from stock and crypto paper accounts."
-          />
-          <SummaryCard
-            label="Open orders"
-            value={String(totalOpenOrders)}
-            detail="Useful now as a shell metric, richer filters land in the next frontend slice."
+            detail="Combined stock and crypto paper equity."
           />
           <SummaryCard
             label="Open positions"
             value={String(totalPositions)}
-            detail="Position detail drawers are staged for a later phase."
+            detail="Across both asset-class paper accounts."
           />
           <SummaryCard
-            label="Data status"
-            value={summaryQuery.isLoading ? 'Loading…' : summaryQuery.isError ? 'Offline' : 'Connected'}
-            tone={summaryQuery.isError ? 'warn' : 'neutral'}
-            detail="Dashboard cards degrade politely if the backend is asleep."
+            label="Open orders"
+            value={String(totalOpenOrders)}
+            detail="Queued orders waiting in the paper engine."
+          />
+          <SummaryCard
+            label="Unrealized PnL"
+            value={formatSignedMoney(totalUnrealized)}
+            tone={totalUnrealized >= 0 ? 'good' : 'warn'}
+            detail="Live paper mark-to-market posture."
           />
         </div>
       </PageSection>
@@ -64,80 +57,95 @@ export function DashboardPage() {
         <PageSection
           eyebrow="Paper accounts"
           title="Asset-class snapshots"
-          description="Thin cards for now, with enough structure to grow into a real cockpit without needing to rip up the flooring later."
+          description="Stock and crypto accounts stay readable here, while deeper positions and orders get their own full lanes."
         >
-          <div className="stack-list">
-            {summaries.length === 0 ? (
-              <div className="empty-state">
-                <p>No account data yet.</p>
-                <p className="muted">Start the backend and this card stack will wake up.</p>
-              </div>
-            ) : (
-              summaries.map((item) => (
+          <QueryState
+            isLoading={summaryQuery.isLoading}
+            isError={summaryQuery.isError}
+            isEmpty={summaries.length === 0}
+            loadingLabel="Warming up paper-account snapshots…"
+            errorLabel="The frontend could not reach the paper account API. Check that the backend is running on port 8000."
+            emptyLabel="No paper-account snapshots yet. Once the backend is up, summary cards will bloom here."
+          >
+            <div className="stack-list">
+              {summaries.map((item) => (
                 <article key={item.asset_class} className="list-card">
                   <div className="list-card__header">
                     <div>
                       <p className="eyebrow">{item.asset_class}</p>
                       <h3>{item.asset_class === 'stock' ? 'Stock paper account' : 'Crypto paper account'}</h3>
                     </div>
-                    <span className="status-pill">{item.base_currency}</span>
+                    <div className="stack-inline stack-inline--tight">
+                      <span className="status-pill">{item.base_currency}</span>
+                      <span className="status-pill">Updated {formatTimestamp(item.updated_at)}</span>
+                    </div>
                   </div>
                   <div className="metric-row">
                     <div>
                       <span className="metric-row__label">Cash available</span>
-                      <strong>{formatMoney(item.cash_available)}</strong>
+                      <strong>{formatMoney(item.cash_available, item.base_currency)}</strong>
+                    </div>
+                    <div>
+                      <span className="metric-row__label">Cash reserved</span>
+                      <strong>{formatMoney(item.cash_reserved, item.base_currency)}</strong>
                     </div>
                     <div>
                       <span className="metric-row__label">Equity</span>
-                      <strong>{formatMoney(item.equity)}</strong>
+                      <strong>{formatMoney(item.equity, item.base_currency)}</strong>
                     </div>
                     <div>
-                      <span className="metric-row__label">Open orders</span>
-                      <strong>{item.open_order_count}</strong>
+                      <span className="metric-row__label">Realized PnL</span>
+                      <strong>{formatSignedMoney(item.realized_pnl, item.base_currency)}</strong>
                     </div>
                     <div>
-                      <span className="metric-row__label">Positions</span>
-                      <strong>{item.position_count}</strong>
+                      <span className="metric-row__label">Unrealized PnL</span>
+                      <strong>{formatSignedMoney(item.unrealized_pnl, item.base_currency)}</strong>
+                    </div>
+                    <div>
+                      <span className="metric-row__label">Order / position counts</span>
+                      <strong>
+                        {item.open_order_count} / {item.position_count}
+                      </strong>
                     </div>
                   </div>
                 </article>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          </QueryState>
         </PageSection>
 
         <PageSection
-          eyebrow="Roadmap"
-          title="Why this shell is shaped this way"
-          description="The uploaded reference screens leaned hard into crisp navigation, dense-but-readable telemetry, and drawer-friendly layouts. Those bones are now in place here too."
+          eyebrow="Operator posture"
+          title="Why this lane stays uncluttered"
+          description="The shell from Phase 5 stays intact. Phase 6 fills it with live account state, but it still keeps detailed order, position, and mutation work on their own pages."
         >
           <div className="feature-list">
             <div className="feature-list__item">
               <Activity size={18} />
               <div>
-                <h3>Summary-first dashboard</h3>
-                <p className="muted">The home view stays uncluttered and leaves detailed inspection for dedicated pages.</p>
+                <h3>Account pulse first</h3>
+                <p className="muted">Home should tell you whether paper capital, orders, and exposure are calm or noisy in one glance.</p>
               </div>
             </div>
             <div className="feature-list__item">
               <ArrowRightLeft size={18} />
               <div>
-                <h3>Drawer-ready page rhythm</h3>
-                <p className="muted">Wide content lanes, soft panels, and modular sections set up future inspect drawers cleanly.</p>
+                <h3>Orders and positions split cleanly</h3>
+                <p className="muted">Table density and control actions stay off the dashboard so the screen remains readable under pressure.</p>
               </div>
             </div>
             <div className="feature-list__item">
               <ShieldCheck size={18} />
               <div>
-                <h3>Operator control posture</h3>
-                <p className="muted">Controls have their own route so dangerous actions stay in one fenced garden.</p>
+                <h3>Controls stay fenced</h3>
+                <p className="muted">Reset, wipe, close, and cancel-all actions remain isolated on the Controls route where confirmations belong.</p>
               </div>
             </div>
             <div className="feature-list__item">
               <Coins size={18} />
               <div>
-                <h3>Backend-aware cards</h3>
-                <p className="muted">Even the phase-5 shell can already sip from the paper account API instead of floating as a static mockup.</p>
+                <h3>Reference-frontend habits preserved</h3>
+                <p className="muted">Dense but readable cards, strong nav hierarchy, and wide content lanes still shape the cockpit.</p>
               </div>
             </div>
           </div>
