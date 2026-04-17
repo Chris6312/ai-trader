@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -20,6 +20,13 @@ class CandleSyncResult:
     skipped: int
 
 
+@dataclass(frozen=True)
+class ProviderReadiness:
+    provider: str
+    configured: bool
+    details: str | None = None
+
+
 class MarketDataRuntimeService:
     def __init__(
         self,
@@ -33,6 +40,21 @@ class MarketDataRuntimeService:
         self.kraken_adapter = kraken_adapter or KrakenMarketDataAdapter()
         self.tradier_adapter = tradier_adapter or TradierMarketDataAdapter()
 
+    def get_provider_readiness(self) -> dict[str, dict[str, object]]:
+        readiness = {
+            "kraken": ProviderReadiness(
+                provider="kraken",
+                configured=True,
+                details="Public market data endpoints do not require private API keys.",
+            ),
+            "tradier": ProviderReadiness(
+                provider="tradier",
+                configured=self._tradier_is_configured(),
+                details=None if self._tradier_is_configured() else "Missing Tradier API token.",
+            ),
+        }
+        return {name: asdict(value) for name, value in readiness.items()}
+
     async def sync_quotes(
         self,
         *,
@@ -44,10 +66,11 @@ class MarketDataRuntimeService:
         if crypto_symbols:
             await self.sync_kraken_symbol_metadata(crypto_symbols)
 
-        for symbol in stock_symbols:
-            quote = await self.tradier_adapter.fetch_quote(symbol)
-            self.market_data_service.cache_quote(quote)
-            cached_count += 1
+        if self._tradier_is_configured():
+            for symbol in stock_symbols:
+                quote = await self.tradier_adapter.fetch_quote(symbol)
+                self.market_data_service.cache_quote(quote)
+                cached_count += 1
 
         if crypto_symbols:
             with self.session_factory() as db:
@@ -68,6 +91,7 @@ class MarketDataRuntimeService:
         stock_symbols: Sequence[str],
         interval: CandleInterval,
         as_of: datetime | None = None,
+        backfill: bool = False,
     ) -> CandleSyncResult:
         as_of = as_of or datetime.now(UTC)
         stored = 0
@@ -91,7 +115,7 @@ class MarketDataRuntimeService:
 
                 stored += self.market_data_service.upsert_candles(db, latest_closed)
 
-            if interval == CandleInterval.DAY_1:
+            if interval == CandleInterval.DAY_1 and self._tradier_is_configured():
                 for symbol in stock_symbols:
                     candles = await self.tradier_adapter.fetch_history(symbol, interval)
                     latest_closed = self._latest_closed_only(candles, as_of=as_of)
@@ -147,3 +171,6 @@ class MarketDataRuntimeService:
             return []
         latest = max(eligible, key=lambda candle: getattr(candle, "open_time"))
         return [latest]
+
+    def _tradier_is_configured(self) -> bool:
+        return bool(getattr(self.tradier_adapter, "is_configured", True))

@@ -20,6 +20,10 @@ class TradierMarketDataAdapter:
         self.base_url = base_url.rstrip("/")
         self._client = client
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.token)
+
     async def fetch_history(self, symbol: str, interval: CandleInterval) -> list[NormalizedCandle]:
         payload = await self._get_json(
             "/history",

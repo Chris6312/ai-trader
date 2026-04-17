@@ -24,9 +24,15 @@ class FakeSyncService:
         self.quote_calls += 1
         return len(crypto_symbols) + len(stock_symbols)
 
-    async def sync_closed_candles(self, *, crypto_symbols, stock_symbols, interval, as_of):
+    async def sync_closed_candles(self, *, crypto_symbols, stock_symbols, interval, as_of, backfill=False):
         self.candle_calls.append(interval)
         return FakeResult(stored=1, skipped=0)
+
+    def get_provider_readiness(self) -> dict[str, dict[str, object]]:
+        return {
+            "kraken": {"provider": "kraken", "configured": True, "details": None},
+            "tradier": {"provider": "tradier", "configured": False, "details": "Missing Tradier API token."},
+        }
 
 
 @pytest.mark.asyncio
@@ -48,3 +54,21 @@ async def test_worker_processes_due_intervals_only_once_per_slot() -> None:
     assert first["intervals_processed"] == ["5m", "1d"]
     assert sync_service.candle_calls == [CandleInterval.MINUTE_5, CandleInterval.DAY_1]
     assert second["intervals_processed"] == []
+
+
+@pytest.mark.asyncio
+async def test_worker_status_surfaces_provider_readiness() -> None:
+    worker = CandleWorker(
+        sync_service=FakeSyncService(),
+        crypto_symbols=("BTC/USD",),
+        stock_symbols=("AAPL",),
+        intervals=("5m",),
+        fetch_delay_seconds=20,
+    )
+
+    await worker.run_once(now=datetime(2026, 1, 1, 10, 5, 21, tzinfo=timezone.utc))
+    status = worker.get_status()
+
+    assert status["last_result"] is not None
+    assert status["provider_readiness"]["kraken"]["configured"] is True
+    assert status["provider_readiness"]["tradier"]["configured"] is False

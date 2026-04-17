@@ -104,6 +104,8 @@ class FakeKrakenAdapter:
 
 
 class FakeTradierAdapter:
+    is_configured = True
+
     async def fetch_quote(self, symbol: str):
         assert symbol == "AAPL"
         return NormalizedQuote(
@@ -140,6 +142,16 @@ class FakeTradierAdapter:
                 source_updated_at=datetime(2026, 4, 16, 23, 59, 59, tzinfo=UTC),
             )
         ]
+
+
+class FakeUnconfiguredTradierAdapter(FakeTradierAdapter):
+    is_configured = False
+
+    async def fetch_quote(self, symbol: str):
+        raise AssertionError("fetch_quote should not be called when Tradier is unconfigured")
+
+    async def fetch_history(self, symbol: str, interval: CandleInterval):
+        raise AssertionError("fetch_history should not be called when Tradier is unconfigured")
 
 
 def _build_session_factory():
@@ -189,3 +201,37 @@ async def test_runtime_service_syncs_quotes_and_closed_candles() -> None:
     assert crypto_only.stored == 1
     assert crypto_only.skipped == 1
     assert len(candles) == 3
+
+
+@pytest.mark.asyncio
+async def test_runtime_service_skips_stock_fetches_when_tradier_is_unconfigured() -> None:
+    session_factory = _build_session_factory()
+    service = MarketDataService(redis_client=FakeRedis())
+    runtime = MarketDataRuntimeService(
+        session_factory=session_factory,
+        market_data_service=service,
+        kraken_adapter=FakeKrakenAdapter(),
+        tradier_adapter=FakeUnconfiguredTradierAdapter(),
+    )
+
+    quotes_cached = await runtime.sync_quotes(
+        crypto_symbols=("BTC/USD",),
+        stock_symbols=("AAPL",),
+    )
+    result = await runtime.sync_closed_candles(
+        crypto_symbols=("BTC/USD",),
+        stock_symbols=("AAPL",),
+        interval=CandleInterval.DAY_1,
+        as_of=datetime(2026, 4, 17, 21, 10, tzinfo=UTC),
+    )
+
+    readiness = runtime.get_provider_readiness()
+
+    with session_factory() as db:
+        candles = db.scalars(select(MarketCandle)).all()
+
+    assert quotes_cached == 1
+    assert result.stored == 1
+    assert result.skipped == 1
+    assert readiness["tradier"]["configured"] is False
+    assert len(candles) == 1

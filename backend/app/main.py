@@ -21,15 +21,19 @@ from app.workers.candle_worker import CandleWorker
 settings = get_settings()
 
 
-def _build_candle_worker() -> CandleWorker:
+def _build_market_data_runtime_service() -> MarketDataRuntimeService:
     redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
     market_data_service = MarketDataService(redis_client=redis_client)
-    runtime_service = MarketDataRuntimeService(
+    return MarketDataRuntimeService(
         session_factory=SessionLocal,
         market_data_service=market_data_service,
         kraken_adapter=KrakenMarketDataAdapter(),
         tradier_adapter=TradierMarketDataAdapter(token=settings.tradier_api_token),
     )
+
+
+def _build_candle_worker() -> CandleWorker:
+    runtime_service = _build_market_data_runtime_service()
     return CandleWorker(
         sync_service=runtime_service,
         crypto_symbols=settings.market_data_crypto_symbols_list,
@@ -37,6 +41,38 @@ def _build_candle_worker() -> CandleWorker:
         intervals=settings.market_data_intervals_list,
         fetch_delay_seconds=settings.market_data_fetch_delay_seconds,
     )
+
+
+def _market_data_status(app: FastAPI) -> dict[str, object]:
+    worker = getattr(app.state, "candle_worker", None)
+    worker_task = getattr(app.state, "candle_worker_task", None)
+
+    if worker is not None:
+        status = worker.get_status()
+    else:
+        runtime_service = _build_market_data_runtime_service()
+        status = {
+            "running": False,
+            "fetch_delay_seconds": settings.market_data_fetch_delay_seconds,
+            "crypto_symbols": list(settings.market_data_crypto_symbols_list),
+            "stock_symbols": list(settings.market_data_stock_symbols_list),
+            "intervals": list(settings.market_data_intervals_list),
+            "next_scheduled_run_at": None,
+            "last_run_started_at": None,
+            "last_run_finished_at": None,
+            "last_error": None,
+            "last_result": None,
+            "last_processed_close_by_interval": {},
+            "provider_readiness": runtime_service.get_provider_readiness(),
+        }
+
+    status.update(
+        {
+            "worker_enabled": settings.market_data_worker_enabled,
+            "worker_task_active": bool(worker_task is not None and not worker_task.done()),
+        }
+    )
+    return status
 
 
 @asynccontextmanager
@@ -84,3 +120,8 @@ def health() -> dict[str, str]:
         "app": settings.app_name,
         "environment": settings.environment,
     }
+
+
+@app.get("/api/market-data/worker-status")
+def market_data_worker_status() -> dict[str, object]:
+    return _market_data_status(app)
