@@ -1,14 +1,67 @@
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from redis import Redis
 
 from app.api import paper_accounts_router
 from app.core.config import get_settings
+from app.db.session import SessionLocal
+from app.market_data.kraken import KrakenMarketDataAdapter
+from app.market_data.tradier import TradierMarketDataAdapter
+from app.services.market_data import MarketDataService
+from app.services.market_data_runtime import MarketDataRuntimeService
 from app.services.paper_accounts import PaperAccountService
+from app.workers.candle_worker import CandleWorker
 
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name)
+
+def _build_candle_worker() -> CandleWorker:
+    redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+    market_data_service = MarketDataService(redis_client=redis_client)
+    runtime_service = MarketDataRuntimeService(
+        session_factory=SessionLocal,
+        market_data_service=market_data_service,
+        kraken_adapter=KrakenMarketDataAdapter(),
+        tradier_adapter=TradierMarketDataAdapter(token=settings.tradier_api_token),
+    )
+    return CandleWorker(
+        sync_service=runtime_service,
+        crypto_symbols=settings.market_data_crypto_symbols_list,
+        stock_symbols=settings.market_data_stock_symbols_list,
+        intervals=settings.market_data_intervals_list,
+        fetch_delay_seconds=settings.market_data_fetch_delay_seconds,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.paper_account_service = PaperAccountService()
+    app.state.candle_worker = None
+    app.state.candle_worker_task = None
+
+    if settings.market_data_worker_enabled:
+        worker = _build_candle_worker()
+        app.state.candle_worker = worker
+        app.state.candle_worker_task = asyncio.create_task(worker.run())
+
+    try:
+        yield
+    finally:
+        worker = getattr(app.state, "candle_worker", None)
+        worker_task = getattr(app.state, "candle_worker_task", None)
+        if worker is not None:
+            worker.stop()
+        if worker_task is not None:
+            await worker_task
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,7 +74,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.state.paper_account_service = PaperAccountService()
 app.include_router(paper_accounts_router)
 
 

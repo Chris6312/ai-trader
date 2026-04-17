@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
@@ -13,8 +14,31 @@ INTERVAL_SECONDS = {
 FETCH_DELAY_SECONDS = 20
 
 
-def next_fetch_time(now: datetime, interval: str) -> datetime:
-    interval_sec = INTERVAL_SECONDS[interval]
-    epoch = int(now.timestamp())
-    next_close = (epoch // interval_sec + 1) * interval_sec
-    return datetime.fromtimestamp(next_close + FETCH_DELAY_SECONDS, tz=timezone.utc)
+def floor_time(now: datetime, interval: str) -> datetime:
+    interval_seconds = INTERVAL_SECONDS[interval]
+    epoch_seconds = int(now.timestamp())
+    floored_epoch = (epoch_seconds // interval_seconds) * interval_seconds
+    return datetime.fromtimestamp(floored_epoch, tz=timezone.utc)
+
+
+def eligible_close_time(
+    now: datetime,
+    interval: str,
+    delay_seconds: int = FETCH_DELAY_SECONDS,
+) -> datetime:
+    effective_now = now - timedelta(seconds=delay_seconds)
+    return floor_time(effective_now, interval)
+
+
+def next_fetch_time(
+    now: datetime,
+    interval: str,
+    delay_seconds: int = FETCH_DELAY_SECONDS,
+) -> datetime:
+    current_close = floor_time(now, interval)
+    current_fetch = current_close + timedelta(seconds=delay_seconds)
+    if now < current_fetch:
+        return current_fetch
+
+    next_close = current_close + timedelta(seconds=INTERVAL_SECONDS[interval])
+    return next_close + timedelta(seconds=delay_seconds)
