@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.market_data.kraken import KrakenMarketDataAdapter
 from app.market_data.tradier import TradierMarketDataAdapter
 from app.models import CandleInterval, MarketDataProvider, SymbolMetadata
+from app.services.market_clock import should_fetch_stock_candles
 from app.services.market_data import MarketDataService
 
 
@@ -115,7 +116,13 @@ class MarketDataRuntimeService:
 
                 stored += self.market_data_service.upsert_candles(db, latest_closed)
 
-            if interval == CandleInterval.DAY_1 and self._tradier_is_configured():
+            should_fetch_stocks = self._tradier_is_configured() and should_fetch_stock_candles(
+                interval=interval,
+                as_of=as_of,
+                backfill=backfill,
+            )
+
+            if should_fetch_stocks:
                 for symbol in stock_symbols:
                     candles = await self.tradier_adapter.fetch_history(symbol, interval)
                     latest_closed = self._latest_closed_only(candles, as_of=as_of)

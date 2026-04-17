@@ -31,7 +31,12 @@ class CandleWorker:
         self._next_scheduled_run_at: datetime | None = None
         self._is_running = False
 
-    async def run_once(self, now: datetime | None = None) -> dict[str, object]:
+    async def run_once(
+        self,
+        now: datetime | None = None,
+        *,
+        backfill: bool = False,
+    ) -> dict[str, object]:
         now = now or datetime.now(UTC)
         self._last_run_started_at = now
         due_intervals: list[str] = []
@@ -42,12 +47,18 @@ class CandleWorker:
                 interval,
                 delay_seconds=self.fetch_delay_seconds,
             )
-            if self._last_processed_close_by_interval.get(interval) == close_time:
+            if not backfill and self._last_processed_close_by_interval.get(interval) == close_time:
                 continue
             due_intervals.append(interval)
 
         if not due_intervals:
-            result = {"quotes_cached": 0, "intervals_processed": [], "stored": 0, "skipped": 0}
+            result = {
+                "quotes_cached": 0,
+                "intervals_processed": [],
+                "stored": 0,
+                "skipped": 0,
+                "backfill": backfill,
+            }
             self._last_result = result
             self._last_run_finished_at = now
             self._last_error = None
@@ -74,6 +85,7 @@ class CandleWorker:
                     stock_symbols=self.stock_symbols,
                     interval=CandleInterval(interval),
                     as_of=now,
+                    backfill=backfill,
                 )
                 self._last_processed_close_by_interval[interval] = close_time
                 stored += result.stored
@@ -85,6 +97,7 @@ class CandleWorker:
                 "intervals_processed": processed,
                 "stored": stored,
                 "skipped": skipped,
+                "backfill": backfill,
             }
             self._last_result = final_result
             self._last_error = None

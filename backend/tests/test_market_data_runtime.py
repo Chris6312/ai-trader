@@ -106,6 +106,9 @@ class FakeKrakenAdapter:
 class FakeTradierAdapter:
     is_configured = True
 
+    def __init__(self) -> None:
+        self.history_calls: list[tuple[str, CandleInterval]] = []
+
     async def fetch_quote(self, symbol: str):
         assert symbol == "AAPL"
         return NormalizedQuote(
@@ -121,14 +124,14 @@ class FakeTradierAdapter:
         )
 
     async def fetch_history(self, symbol: str, interval: CandleInterval):
+        self.history_calls.append((symbol, interval))
         assert symbol == "AAPL"
-        assert interval == CandleInterval.DAY_1
         return [
             NormalizedCandle(
                 provider=MarketDataProvider.TRADIER,
                 asset_class=AssetClass.STOCK,
                 symbol="AAPL",
-                interval=CandleInterval.DAY_1,
+                interval=interval,
                 open_time=datetime(2026, 4, 16, 0, 0, tzinfo=UTC),
                 close_time=datetime(2026, 4, 16, 23, 59, 59, tzinfo=UTC),
                 open_price=Decimal("187.2"),
@@ -162,14 +165,15 @@ def _build_session_factory():
 
 
 @pytest.mark.asyncio
-async def test_runtime_service_syncs_quotes_and_closed_candles() -> None:
+async def test_runtime_service_syncs_quotes_and_closed_candles_after_close() -> None:
     session_factory = _build_session_factory()
     service = MarketDataService(redis_client=FakeRedis())
+    tradier = FakeTradierAdapter()
     runtime = MarketDataRuntimeService(
         session_factory=session_factory,
         market_data_service=service,
         kraken_adapter=FakeKrakenAdapter(),
-        tradier_adapter=FakeTradierAdapter(),
+        tradier_adapter=tradier,
     )
 
     quotes_cached = await runtime.sync_quotes(
@@ -180,7 +184,7 @@ async def test_runtime_service_syncs_quotes_and_closed_candles() -> None:
         crypto_symbols=("BTC/USD",),
         stock_symbols=("AAPL",),
         interval=CandleInterval.DAY_1,
-        as_of=datetime(2026, 4, 17, 21, 10, tzinfo=UTC),
+        as_of=datetime(2026, 4, 17, 20, 10, tzinfo=UTC),
     )
     crypto_only = await runtime.sync_closed_candles(
         crypto_symbols=("BTC/USD",),
@@ -201,6 +205,61 @@ async def test_runtime_service_syncs_quotes_and_closed_candles() -> None:
     assert crypto_only.stored == 1
     assert crypto_only.skipped == 1
     assert len(candles) == 3
+    assert tradier.history_calls == [("AAPL", CandleInterval.DAY_1)]
+
+
+@pytest.mark.asyncio
+async def test_runtime_service_skips_stock_fetches_before_close_without_backfill() -> None:
+    session_factory = _build_session_factory()
+    service = MarketDataService(redis_client=FakeRedis())
+    tradier = FakeTradierAdapter()
+    runtime = MarketDataRuntimeService(
+        session_factory=session_factory,
+        market_data_service=service,
+        kraken_adapter=FakeKrakenAdapter(),
+        tradier_adapter=tradier,
+    )
+
+    result = await runtime.sync_closed_candles(
+        crypto_symbols=("BTC/USD",),
+        stock_symbols=("AAPL",),
+        interval=CandleInterval.DAY_1,
+        as_of=datetime(2026, 4, 17, 19, 55, tzinfo=UTC),
+        backfill=False,
+    )
+
+    with session_factory() as db:
+        candles = db.scalars(select(MarketCandle)).all()
+
+    assert result.stored == 1
+    assert result.skipped == 1
+    assert len(candles) == 1
+    assert tradier.history_calls == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_service_allows_backfill_before_close() -> None:
+    session_factory = _build_session_factory()
+    service = MarketDataService(redis_client=FakeRedis())
+    tradier = FakeTradierAdapter()
+    runtime = MarketDataRuntimeService(
+        session_factory=session_factory,
+        market_data_service=service,
+        kraken_adapter=FakeKrakenAdapter(),
+        tradier_adapter=tradier,
+    )
+
+    result = await runtime.sync_closed_candles(
+        crypto_symbols=("BTC/USD",),
+        stock_symbols=("AAPL",),
+        interval=CandleInterval.DAY_1,
+        as_of=datetime(2026, 4, 17, 19, 55, tzinfo=UTC),
+        backfill=True,
+    )
+
+    assert result.stored == 2
+    assert result.skipped == 0
+    assert tradier.history_calls == [("AAPL", CandleInterval.DAY_1)]
 
 
 @pytest.mark.asyncio
