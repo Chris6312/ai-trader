@@ -1,3 +1,4 @@
+from app.models.market_data import CandleInterval, MarketCandle, MarketDataProvider, SymbolMetadata
 from app.models.trading import (
     Account,
     AccountType,
@@ -18,6 +19,10 @@ from app.models.trading import (
 )
 
 __all__ = [
+    "CandleInterval",
+    "MarketCandle",
+    "MarketDataProvider",
+    "SymbolMetadata",
     "Account",
     "AccountType",
     "AssetClass",
