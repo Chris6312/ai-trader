@@ -255,7 +255,43 @@ Add assistive AI/ML components without making execution non-deterministic.
 
 ---
 
-## Phase 12 - Live Broker Adapters
+## Phase 12 - ML Scoring Engine + Historical Replay Training
+### Goal
+Create the historical replay, labeling, training, and validation lane that powers ML-assisted candidate ranking without changing deterministic execution behavior.
+
+### Tasks
+- Freeze historical training universes by date for stocks and crypto
+- Build historical feature store rows by decision date using only information available at that time
+- Add historical strategy replay/backtesting to measure follow-through outcomes
+- Generate deterministic, versioned labels from replay outputs
+- Define replay and backtesting policy versions
+- Build reproducible training datasets from features, replay outputs, and labels
+- Train baseline models per strategy
+- Run walk-forward validation across unseen windows
+- Review feature importance and drift
+- Integrate ML follow-through scoring into ranking only after deterministic filters pass
+- Add retraining schedule and model versioning
+- Persist reproducibility metadata and inspection endpoints
+- Add audit documentation for ML scope and guardrails
+
+### Deliverables
+- Historical replay engine and replay result persistence
+- Deterministic label generation pipeline
+- Reproducible ML training dataset builder
+- Baseline ML model artifacts and validation reports
+- Read-only ML inspection endpoints
+- Audit documentation describing allowed and forbidden ML influence
+
+### Exit Criteria
+- Historical replay produces deterministic labels from stored data
+- ML training uses replay-derived outcomes rather than guessed returns
+- Walk-forward validation is strong enough to justify ranking use
+- ML improves candidate ranking without bypassing deterministic strategy, risk, or execution rules
+- Model scores are reproducible and inspectable
+
+---
+
+## Phase 13 - Live Broker Adapters
 ### Goal
 Introduce live broker connectivity behind the same broker abstraction.
 
@@ -275,7 +311,7 @@ Introduce live broker connectivity behind the same broker abstraction.
 
 ---
 
-## Phase 13 - Observability and Runtime Controls
+## Phase 14 - Observability and Runtime Controls
 ### Goal
 Make the system traceable, inspectable, and safer to operate.
 
@@ -295,7 +331,7 @@ Make the system traceable, inspectable, and safer to operate.
 
 ---
 
-## Phase 14 - Backtesting and Research
+## Phase 15 - Backtesting and Research
 ### Goal
 Create a research lane separate from live/paper execution.
 
@@ -314,7 +350,7 @@ Create a research lane separate from live/paper execution.
 
 ---
 
-## Phase 15 - Production Hardening
+## Phase 16 - Production Hardening
 ### Goal
 Prepare the platform for safer long-running operation.
 
