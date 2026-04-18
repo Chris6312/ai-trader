@@ -1,6 +1,15 @@
 # ENGINEERING STANDARD
 
 ## Phase 11 / 12 historical data policy
+
+## Phase 11D technical scoring policy
+
+- Technical scoring must stay deterministic, explainable, and provider-agnostic after feature generation.
+- Phase 11D technical scoring consumes Phase 11C feature rows and produces a bounded `0..1` technical score.
+- Scores must be traceable through component breakdowns rather than opaque single-number output only.
+- Technical scoring ranks candidates but does not replace later regime, sentiment, or ML layers.
+
+
 ## Phase 11C feature policy
 
 - Feature generation must stay deterministic, provider-agnostic after candle ingestion, and testable in isolation.
