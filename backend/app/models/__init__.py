@@ -1,4 +1,5 @@
 from app.models.ai_research import (
+    BacktestingPolicyVersion,
     FeatureDefinitionVersion,
     HistoricalReplayLabel,
     LabelPolicyVersion,
@@ -33,6 +34,7 @@ from app.models.trading import (
 
 __all__ = [
     "SymbolRegistry",
+    "BacktestingPolicyVersion",
     "FeatureDefinitionVersion",
     "HistoricalReplayLabel",
     "LabelPolicyVersion",

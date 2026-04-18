@@ -3,10 +3,16 @@ from app.services.historical.ai_scheduler import AIResearchSchedulerService
 from app.services.historical.feature_builder import FeatureBuilderService
 from app.services.historical.historical_strategy_replay import HistoricalStrategyReplayService
 from app.services.historical.historical_label_generator import HistoricalLabelGeneratorService
+from app.services.historical.historical_backtesting_policy import HistoricalBacktestingPolicyService
 from app.services.historical.historical_feature_store import HistoricalFeatureStoreService
 from app.services.historical.historical_universe_snapshot import HistoricalUniverseSnapshotService
 from app.services.historical.feature_schemas import FeatureBuildSummary, HistoricalFeatureRecord
 from app.services.historical.historical_replay_schemas import HistoricalReplayPolicy, HistoricalReplayRecord, HistoricalReplaySummary
+from app.services.historical.historical_backtesting_policy_schemas import (
+    BacktestingPolicyVersionRecord,
+    HistoricalBacktestingPolicy,
+    ResolvedBacktestingPolicyRecord,
+)
 from app.services.historical.historical_label_schemas import (
     HistoricalLabelGenerationSummary,
     HistoricalLabelPolicy,
@@ -55,6 +61,10 @@ __all__ = [
     "HistoricalLabelPolicy",
     "LabelPolicyVersionRecord",
     "HistoricalStrategyReplayService",
+    "HistoricalBacktestingPolicy",
+    "BacktestingPolicyVersionRecord",
+    "ResolvedBacktestingPolicyRecord",
+    "HistoricalBacktestingPolicyService",
     "HistoricalLabelGeneratorService",
     "HistoricalUniverseSnapshotService",
     "FeatureBuilderService",

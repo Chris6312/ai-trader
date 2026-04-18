@@ -182,6 +182,27 @@ class HistoricalStrategyReplay(Base):
     )
 
 
+
+
+class BacktestingPolicyVersion(Base):
+    __tablename__ = "backtesting_policy_versions"
+
+    policy_version: Mapped[str] = mapped_column(String(30), primary_key=True)
+    policy_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    replay_policy_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    label_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    evaluation_window_bars: Mapped[int] = mapped_column(nullable=False)
+    success_threshold_return: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    max_drawdown_return: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    require_target_before_stop: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    regime_adjustments_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class LabelPolicyVersion(Base):
     __tablename__ = "label_policy_versions"
 
