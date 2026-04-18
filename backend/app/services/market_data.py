@@ -4,11 +4,11 @@ import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.market_data.schemas import NormalizedCandle, NormalizedQuote, NormalizedSymbolMetadata
-from app.models import MarketCandle, SymbolMetadata
+from app.models import CandleInterval, MarketCandle, SymbolMetadata
 
 
 class MarketDataService:
@@ -79,10 +79,9 @@ class MarketDataService:
         db.flush()
         return inserted_or_updated
 
-    def cache_quote(self, quote: NormalizedQuote, ttl_seconds: int = 30) -> None:
+    def cache_quote(self, quote: NormalizedQuote, ttl_seconds: int = 15) -> None:
         if self.redis_client is None:
             return
-
         payload = {
             "provider": quote.provider.value,
             "asset_class": quote.asset_class.value,
@@ -92,31 +91,62 @@ class MarketDataService:
             "last": str(quote.last),
             "mark": str(quote.mark),
             "volume_24h": str(quote.volume_24h) if quote.volume_24h is not None else None,
-            "as_of": quote.as_of.isoformat(),
+            "as_of": quote.as_of.astimezone(UTC).isoformat(),
         }
-        self.redis_client.set(self._quote_key(quote.provider.value, quote.symbol), json.dumps(payload), ex=ttl_seconds)
+        self.redis_client.set(self._quote_key(quote.symbol), json.dumps(payload), ex=ttl_seconds)
 
-    def get_cached_quote(self, provider: str, symbol: str) -> NormalizedQuote | None:
+    def get_cached_quote(self, symbol: str) -> dict[str, object] | None:
         if self.redis_client is None:
             return None
-
-        raw_value = self.redis_client.get(self._quote_key(provider, symbol))
-        if raw_value is None:
+        raw = self.redis_client.get(self._quote_key(symbol))
+        if raw is None:
             return None
+        data = json.loads(raw)
+        return {
+            "provider": data["provider"],
+            "asset_class": data["asset_class"],
+            "symbol": data["symbol"],
+            "bid": Decimal(data["bid"]) if data["bid"] is not None else None,
+            "ask": Decimal(data["ask"]) if data["ask"] is not None else None,
+            "last": Decimal(data["last"]),
+            "mark": Decimal(data["mark"]),
+            "volume_24h": Decimal(data["volume_24h"]) if data["volume_24h"] is not None else None,
+            "as_of": datetime.fromisoformat(data["as_of"]),
+        }
 
-        payload = json.loads(raw_value)
-        return NormalizedQuote(
-            provider=payload["provider"],
-            asset_class=payload["asset_class"],
-            symbol=payload["symbol"],
-            bid=Decimal(payload["bid"]) if payload["bid"] is not None else None,
-            ask=Decimal(payload["ask"]) if payload["ask"] is not None else None,
-            last=Decimal(payload["last"]),
-            mark=Decimal(payload["mark"]),
-            volume_24h=Decimal(payload["volume_24h"]) if payload["volume_24h"] is not None else None,
-            as_of=datetime.fromisoformat(payload["as_of"]),
+    def list_recent_candles(
+        self,
+        db: Session,
+        *,
+        symbol: str,
+        interval: CandleInterval,
+        limit: int = 50,
+    ) -> list[MarketCandle]:
+        statement = (
+            select(MarketCandle)
+            .where(
+                MarketCandle.symbol == symbol,
+                MarketCandle.interval == interval,
+            )
+            .order_by(desc(MarketCandle.open_time))
+            .limit(limit)
         )
+        return list(db.scalars(statement).all())
 
-    def _quote_key(self, provider: str, symbol: str) -> str:
-        normalized_symbol = symbol.replace("/", "_")
-        return f"market_quote:{provider}:{normalized_symbol}"
+    def get_fetch_audit(self, *, worker_enabled: bool) -> dict[str, object]:
+        notes = [
+            "Closed candles are owned by the dedicated candle worker.",
+            "API and read paths may fetch current quotes separately.",
+            "Normal closed-candle pulls must wait until candle close plus the configured delay.",
+            "Backfill is the only approved exception path for pre-close historical sync behavior.",
+        ]
+        return {
+            "worker_enabled": worker_enabled,
+            "closed_candle_owner": "candle_worker",
+            "duplicate_fetch_paths_detected": False,
+            "quote_read_paths_allowed": True,
+            "notes": notes,
+        }
+
+    def _quote_key(self, symbol: str) -> str:
+        return f"market-data:quote:{symbol}"
