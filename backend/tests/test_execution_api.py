@@ -65,6 +65,7 @@ def test_recent_execution_endpoint_returns_execution_payload():
 
     with testing_session_factory() as db:
         signal = _create_executed_signal(db)
+        signal_id = signal.id
 
     def override_get_db():
         db = testing_session_factory()
@@ -83,7 +84,7 @@ def test_recent_execution_endpoint_returns_execution_payload():
     assert response.status_code == 200
     payload = response.json()
     assert len(payload) == 1
-    assert payload[0]["signal_id"] == signal.id
+    assert payload[0]["signal_id"] == signal_id
     assert payload[0]["symbol"] == "AAPL"
     assert payload[0]["quantity"] == "3"
     assert payload[0]["fill_price"] == "150.50"
@@ -129,3 +130,126 @@ def test_execution_summary_endpoint_counts_execution_states():
     assert payload["rejected"] == 0
     assert payload["executed"] == 1
     assert payload["recent_execution_count"] == 1
+
+
+def test_recent_execution_endpoint_supports_asset_class_and_symbol_filters():
+    testing_session_factory = _build_test_sessionmaker()
+
+    with testing_session_factory() as db:
+        _create_executed_signal(db)
+        crypto_account = Account(
+            name="crypto-paper",
+            account_type=AccountType.PAPER,
+            asset_class=AssetClass.CRYPTO,
+            base_currency="USD",
+            is_active=True,
+        )
+        db.add(crypto_account)
+        db.flush()
+
+        crypto_signal = Signal(
+            account_id=crypto_account.id,
+            symbol="BTCUSD",
+            asset_class=AssetClass.CRYPTO,
+            strategy_name="momentum",
+            timeframe="1h",
+            status=SignalStatus.APPROVED,
+            confidence=0.91,
+            reasoning="{}",
+        )
+        db.add(crypto_signal)
+        db.commit()
+        db.refresh(crypto_signal)
+
+        PaperExecutionEngine().execute_approved_signal(
+            db,
+            PaperExecutionRequest(
+                signal_id=crypto_signal.id,
+                quantity=Decimal("0.25"),
+                fill_price=Decimal("65000.125"),
+            ),
+        )
+
+    def override_get_db():
+        db = testing_session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.get("/api/execution/recent", params={"asset_class": "crypto", "symbol": "btcusd"})
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["asset_class"] == "crypto"
+    assert payload[0]["symbol"] == "BTCUSD"
+    assert payload[0]["fill_price"] == "65000.125"
+
+
+def test_execution_summary_endpoint_supports_account_filter():
+    testing_session_factory = _build_test_sessionmaker()
+
+    with testing_session_factory() as db:
+        stock_signal = _create_executed_signal(db)
+        stock_account_id = stock_signal.account_id
+
+        crypto_account = Account(
+            name="crypto-paper",
+            account_type=AccountType.PAPER,
+            asset_class=AssetClass.CRYPTO,
+            base_currency="USD",
+            is_active=True,
+        )
+        db.add(crypto_account)
+        db.flush()
+
+        crypto_signal = Signal(
+            account_id=crypto_account.id,
+            symbol="ETHUSD",
+            asset_class=AssetClass.CRYPTO,
+            strategy_name="trend_continuation",
+            timeframe="4h",
+            status=SignalStatus.APPROVED,
+            confidence=0.82,
+            reasoning="{}",
+        )
+        db.add(crypto_signal)
+        db.commit()
+        db.refresh(crypto_signal)
+
+        PaperExecutionEngine().execute_approved_signal(
+            db,
+            PaperExecutionRequest(
+                signal_id=crypto_signal.id,
+                quantity=Decimal("1.5"),
+                fill_price=Decimal("3200.25"),
+            ),
+        )
+
+    def override_get_db():
+        db = testing_session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.get("/api/execution/summary", params={"account_id": stock_account_id})
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["executed"] == 1
+    assert payload["recent_execution_count"] == 1
+    assert payload["approved"] == 0
+    assert payload["rejected"] == 0
+    assert payload["new"] == 0

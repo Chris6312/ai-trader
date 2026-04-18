@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models import AssetClass
 from app.services.execution_engine import PaperExecutionEngine
 
 router = APIRouter(prefix="/api/execution", tags=["execution"])
@@ -30,10 +31,19 @@ def _decimal_to_crypto_price_string(value: Decimal) -> str:
 @router.get("/recent")
 def get_recent_executions(
     limit: int = Query(50, ge=1, le=200),
+    account_id: int | None = Query(default=None, ge=1),
+    asset_class: AssetClass | None = Query(default=None),
+    symbol: str | None = Query(default=None, min_length=1),
     db: Session = Depends(get_db),
 ) -> list[dict[str, object]]:
     service = PaperExecutionEngine()
-    records = service.list_recent_executions(db, limit=limit)
+    records = service.list_recent_executions(
+        db,
+        limit=limit,
+        account_id=account_id,
+        asset_class=asset_class,
+        symbol=symbol,
+    )
     return [
         {
             "signal_id": record.signal_id,
@@ -63,6 +73,16 @@ def get_recent_executions(
 
 
 @router.get("/summary")
-def get_execution_summary(db: Session = Depends(get_db)) -> dict[str, int]:
+def get_execution_summary(
+    account_id: int | None = Query(default=None, ge=1),
+    asset_class: AssetClass | None = Query(default=None),
+    symbol: str | None = Query(default=None, min_length=1),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
     service = PaperExecutionEngine()
-    return service.get_execution_summary(db)
+    return service.get_execution_summary(
+        db,
+        account_id=account_id,
+        asset_class=asset_class,
+        symbol=symbol,
+    )

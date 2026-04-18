@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.brokers import OrderRequest
@@ -271,21 +271,47 @@ class PaperExecutionEngine:
 
         db.commit()
 
+    def _apply_signal_filters(
+        self,
+        stmt: Select[tuple[Signal]],
+        *,
+        account_id: int | None = None,
+        asset_class: AssetClass | None = None,
+        symbol: str | None = None,
+    ) -> Select[tuple[Signal]]:
+        if account_id is not None:
+            stmt = stmt.where(Signal.account_id == account_id)
+
+        if asset_class is not None:
+            stmt = stmt.where(Signal.asset_class == asset_class)
+
+        if symbol:
+            stmt = stmt.where(Signal.symbol == symbol.upper())
+
+        return stmt
+
     def list_recent_executions(
         self,
         db: Session,
         limit: int = 50,
+        *,
+        account_id: int | None = None,
+        asset_class: AssetClass | None = None,
+        symbol: str | None = None,
     ) -> list[ExecutionAuditRecord]:
-        signals = (
-            db.execute(
-                select(Signal)
-                .where(Signal.status == SignalStatus.EXECUTED)
-                .order_by(Signal.created_at.desc())
-                .limit(limit)
-            )
-            .scalars()
-            .all()
+        stmt = (
+            select(Signal)
+            .where(Signal.status == SignalStatus.EXECUTED)
+            .order_by(Signal.created_at.desc())
+            .limit(limit)
         )
+        stmt = self._apply_signal_filters(
+            stmt,
+            account_id=account_id,
+            asset_class=asset_class,
+            symbol=symbol,
+        )
+        signals = db.execute(stmt).scalars().all()
 
         results: list[ExecutionAuditRecord] = []
 
@@ -317,7 +343,14 @@ class PaperExecutionEngine:
 
         return results
 
-    def get_execution_summary(self, db: Session) -> dict[str, int]:
+    def get_execution_summary(
+        self,
+        db: Session,
+        *,
+        account_id: int | None = None,
+        asset_class: AssetClass | None = None,
+        symbol: str | None = None,
+    ) -> dict[str, int]:
         counts = {
             "new": 0,
             "approved": 0,
@@ -327,7 +360,13 @@ class PaperExecutionEngine:
             "recent_skipped_count": 0,
         }
 
-        signals = db.execute(select(Signal)).scalars().all()
+        stmt = self._apply_signal_filters(
+            select(Signal),
+            account_id=account_id,
+            asset_class=asset_class,
+            symbol=symbol,
+        )
+        signals = db.execute(stmt).scalars().all()
 
         for s in signals:
             if s.status == SignalStatus.NEW:
