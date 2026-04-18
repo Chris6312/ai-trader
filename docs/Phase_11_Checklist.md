@@ -55,9 +55,9 @@
 - [x] Persistence tests
 
 ## 11I AI API Endpoints
-- [ ] AI snapshot inspection endpoints
-- [ ] Research-layer API schemas
-- [ ] API tests
+- [x] AI snapshot inspection endpoints
+- [x] Research-layer API schemas
+- [x] API tests
 
 ## 11J Daily Scheduler Integration
 - [ ] Once-daily AI enrichment wiring
