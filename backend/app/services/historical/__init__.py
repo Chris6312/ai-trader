@@ -1,8 +1,23 @@
 from app.services.historical.backfill_planner import BackfillPlanner
 from app.services.historical.ai_scheduler import AIResearchSchedulerService
 from app.services.historical.feature_builder import FeatureBuilderService
+from app.services.historical.historical_strategy_replay import HistoricalStrategyReplayService
+from app.services.historical.historical_label_generator import HistoricalLabelGeneratorService
+from app.services.historical.historical_feature_store import HistoricalFeatureStoreService
 from app.services.historical.historical_universe_snapshot import HistoricalUniverseSnapshotService
 from app.services.historical.feature_schemas import FeatureBuildSummary, HistoricalFeatureRecord
+from app.services.historical.historical_replay_schemas import HistoricalReplayPolicy, HistoricalReplayRecord, HistoricalReplaySummary
+from app.services.historical.historical_label_schemas import (
+    HistoricalLabelGenerationSummary,
+    HistoricalLabelPolicy,
+    HistoricalReplayLabelRecord,
+    LabelPolicyVersionRecord,
+)
+from app.services.historical.feature_store_schemas import (
+    FeatureDefinitionVersionRecord,
+    HistoricalFeatureStoreBuildSummary,
+    HistoricalFeatureStoreRowRecord,
+)
 from app.services.historical.regime_detection import RegimeDetectionService
 from app.services.historical.snapshot_persistence import AISnapshotPersistenceService
 from app.services.historical.universe_composer import UniverseComposerService
@@ -28,6 +43,19 @@ __all__ = [
     "BackfillPlanner",
     "CandleRetentionPolicy",
     "FeatureBuildSummary",
+    "FeatureDefinitionVersionRecord",
+    "HistoricalFeatureStoreBuildSummary",
+    "HistoricalFeatureStoreRowRecord",
+    "HistoricalFeatureStoreService",
+    "HistoricalReplayPolicy",
+    "HistoricalReplayRecord",
+    "HistoricalReplaySummary",
+    "HistoricalReplayLabelRecord",
+    "HistoricalLabelGenerationSummary",
+    "HistoricalLabelPolicy",
+    "LabelPolicyVersionRecord",
+    "HistoricalStrategyReplayService",
+    "HistoricalLabelGeneratorService",
     "HistoricalUniverseSnapshotService",
     "FeatureBuilderService",
     "HistoricalBackfillRequest",

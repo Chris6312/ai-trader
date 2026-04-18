@@ -1,4 +1,9 @@
 from app.models.ai_research import (
+    FeatureDefinitionVersion,
+    HistoricalReplayLabel,
+    LabelPolicyVersion,
+    HistoricalFeatureRow,
+    HistoricalStrategyReplay,
     HistoricalUniverseSnapshot,
     RegimeSnapshot,
     SentimentSnapshot,
@@ -28,6 +33,11 @@ from app.models.trading import (
 
 __all__ = [
     "SymbolRegistry",
+    "FeatureDefinitionVersion",
+    "HistoricalReplayLabel",
+    "LabelPolicyVersion",
+    "HistoricalFeatureRow",
+    "HistoricalStrategyReplay",
     "HistoricalUniverseSnapshot",
     "TechnicalSnapshot",
     "SentimentSnapshot",

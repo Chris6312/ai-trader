@@ -81,6 +81,165 @@ class HistoricalUniverseSnapshot(Base):
     )
 
 
+
+
+class FeatureDefinitionVersion(Base):
+    __tablename__ = "feature_definition_versions"
+
+    feature_version: Mapped[str] = mapped_column(String(30), primary_key=True)
+    warmup_period: Mapped[int] = mapped_column(nullable=False)
+    feature_keys_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class HistoricalFeatureRow(Base):
+    __tablename__ = "historical_feature_rows"
+    __table_args__ = (
+        UniqueConstraint(
+            "decision_date",
+            "symbol",
+            "asset_class",
+            "timeframe",
+            "candle_time",
+            "source_label",
+            "feature_version",
+            name="uq_historical_feature_row",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    decision_date: Mapped[date] = mapped_column(Date(), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    asset_class: Mapped[AssetClass] = mapped_column(
+        SqlEnum(AssetClass, name="asset_class_enum"),
+        nullable=False,
+        index=True,
+    )
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    candle_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    source_label: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    feature_version: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    values_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+class HistoricalStrategyReplay(Base):
+    __tablename__ = "historical_strategy_replays"
+    __table_args__ = (
+        UniqueConstraint(
+            "decision_date",
+            "symbol",
+            "asset_class",
+            "timeframe",
+            "strategy_name",
+            "entry_candle_time",
+            "replay_version",
+            name="uq_historical_strategy_replay_row",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    decision_date: Mapped[date] = mapped_column(Date(), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    asset_class: Mapped[AssetClass] = mapped_column(
+        SqlEnum(AssetClass, name="asset_class_enum"),
+        nullable=False,
+        index=True,
+    )
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    source_label: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    replay_version: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    policy_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    entry_candle_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    exit_candle_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    exit_price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    stop_price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    target_price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    entry_confidence: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    risk_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    exit_reason: Mapped[str] = mapped_column(String(30), nullable=False)
+    hold_bars: Mapped[int] = mapped_column(nullable=False)
+    max_favorable_excursion: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    max_adverse_excursion: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    gross_return: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    strategy_summary: Mapped[str] = mapped_column(String(255), nullable=False)
+    strategy_checks_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    strategy_indicators_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    risk_rejection_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class LabelPolicyVersion(Base):
+    __tablename__ = "label_policy_versions"
+
+    label_version: Mapped[str] = mapped_column(String(30), primary_key=True)
+    policy_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    success_threshold_return: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    max_drawdown_return: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    require_target_before_stop: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    max_hold_bars: Mapped[int] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class HistoricalReplayLabel(Base):
+    __tablename__ = "historical_replay_labels"
+    __table_args__ = (
+        UniqueConstraint(
+            "decision_date",
+            "symbol",
+            "asset_class",
+            "timeframe",
+            "strategy_name",
+            "entry_candle_time",
+            "label_version",
+            name="uq_historical_replay_label_row",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    decision_date: Mapped[date] = mapped_column(Date(), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    asset_class: Mapped[AssetClass] = mapped_column(
+        SqlEnum(AssetClass, name="asset_class_enum"),
+        nullable=False,
+        index=True,
+    )
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    entry_candle_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    source_label: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    replay_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    label_version: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    is_trade_profitable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    hit_target_before_stop: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    follow_through_strength: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False)
+    drawdown_within_limit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    achieved_label: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    label_values_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class TechnicalSnapshot(Base):
     __tablename__ = "ai_technical_snapshots"
     __table_args__ = (
