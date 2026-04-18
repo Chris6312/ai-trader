@@ -44,10 +44,10 @@
 - [x] Regime detection tests
 
 ## 11G Universe Composer
-- [ ] Unified AI ranking/composition schema
-- [ ] Merge technical + sentiment + regime outputs
-- [ ] Deterministic universe composition rules
-- [ ] Universe composer tests
+- [x] Unified AI ranking/composition schema
+- [x] Merge technical + sentiment + regime outputs
+- [x] Deterministic universe composition rules
+- [x] Universe composer tests
 
 ## 11H AI Snapshot Persistence Expansion
 - [ ] Snapshot persistence schema updates
