@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.risk import RiskApprovalInput, RiskApprovalResult
+from app.services.execution_engine import PaperExecutionEngine, PaperExecutionRequest
 from app.services.risk_engine import RiskEngineService
 from app.services.strategy_engine import StrategyEngine
 from app.strategies.types import StrategyInputBundle
@@ -17,10 +18,14 @@ class StrategyRuntimeRiskRecord:
     passed_strategy: bool
     approved: bool | None
     rejection_reason: str | None
+    executed: bool = False
+    execution_order_id: int | None = None
+    execution_error: str | None = None
 
 
 engine = StrategyEngine()
 risk_engine = RiskEngineService()
+execution_engine = PaperExecutionEngine()
 
 
 def evaluate_from_candles(db: Session, bundle: StrategyInputBundle):
@@ -78,5 +83,42 @@ def evaluate_from_candles_with_risk(
                 rejection_reason=approval_result.rejection_reason.value if approval_result.rejection_reason else None,
             )
         )
+
+    return runtime_records
+
+
+def evaluate_from_candles_with_risk_and_execution(
+    db: Session,
+    bundle: StrategyInputBundle,
+    approval_inputs_by_strategy: dict[str, RiskApprovalInput],
+    execution_requests_by_strategy: dict[str, PaperExecutionRequest],
+    *,
+    account_id: int | None = None,
+) -> list[StrategyRuntimeRiskRecord]:
+    runtime_records = evaluate_from_candles_with_risk(
+        db=db,
+        bundle=bundle,
+        approval_inputs_by_strategy=approval_inputs_by_strategy,
+        account_id=account_id,
+    )
+
+    for record in runtime_records:
+        if record.signal_id is None or record.approved is not True:
+            continue
+
+        execution_request = execution_requests_by_strategy.get(record.strategy)
+        if execution_request is None:
+            record.execution_error = "missing_execution_request"
+            continue
+
+        execution_request.signal_id = record.signal_id
+        try:
+            execution_result = execution_engine.execute_approved_signal(db=db, request=execution_request)
+        except Exception as exc:  # pragma: no cover - surfaced in runtime record for deterministic inspection
+            record.execution_error = str(exc)
+            continue
+
+        record.executed = execution_result.executed
+        record.execution_order_id = execution_result.db_order_id
 
     return runtime_records
