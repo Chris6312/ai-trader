@@ -1,6 +1,7 @@
 from app.services.historical.backfill_planner import BackfillPlanner
 from app.services.historical.ai_scheduler import AIResearchSchedulerService
 from app.services.historical.feature_builder import FeatureBuilderService
+from app.services.historical.historical_universe_snapshot import HistoricalUniverseSnapshotService
 from app.services.historical.feature_schemas import FeatureBuildSummary, HistoricalFeatureRecord
 from app.services.historical.regime_detection import RegimeDetectionService
 from app.services.historical.snapshot_persistence import AISnapshotPersistenceService
@@ -27,6 +28,7 @@ __all__ = [
     "BackfillPlanner",
     "CandleRetentionPolicy",
     "FeatureBuildSummary",
+    "HistoricalUniverseSnapshotService",
     "FeatureBuilderService",
     "HistoricalBackfillRequest",
     "HistoricalFeatureRecord",
