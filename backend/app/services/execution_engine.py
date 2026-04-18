@@ -56,6 +56,8 @@ class PaperExecutionResult:
     quantity: Decimal
     fill_price: Decimal
     reasoning: dict[str, Any]
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 class PaperExecutionEngine:
@@ -72,10 +74,6 @@ class PaperExecutionEngine:
             raise ExecutionError(f"Signal {request.signal_id} was not found.")
         if signal.account_id is None:
             raise ExecutionError("Approved signal must be linked to an account before execution.")
-        if signal.status is not SignalStatus.APPROVED:
-            raise ExecutionError(
-                f"Signal {signal.id} must be in approved status before execution. Current status: {signal.status.value}."
-            )
         if request.quantity <= Decimal("0"):
             raise ExecutionError("Execution quantity must be greater than zero.")
         if request.fill_price <= Decimal("0"):
@@ -89,6 +87,15 @@ class PaperExecutionEngine:
         if account.asset_class is not asset_class:
             raise ExecutionError(
                 f"Signal asset class {asset_class.value} does not match account asset class {account.asset_class.value}."
+            )
+
+        existing_execution_result = self._extract_existing_execution_result(signal=signal, account=account)
+        if existing_execution_result is not None:
+            return existing_execution_result
+
+        if signal.status is not SignalStatus.APPROVED:
+            raise ExecutionError(
+                f"Signal {signal.id} must be in approved status before execution. Current status: {signal.status.value}."
             )
 
         broker = self._paper_account_service.get_broker(asset_class)
@@ -248,6 +255,36 @@ class PaperExecutionEngine:
         db.flush()
         return fill
 
+    def _extract_existing_execution_result(self, *, signal: Signal, account: Account) -> PaperExecutionResult | None:
+        reasoning_payload = self._load_reasoning(signal.reasoning)
+        execution_payload = reasoning_payload.get("execution")
+        if not isinstance(execution_payload, dict):
+            return None
+
+        if execution_payload.get("executed") is not True:
+            return None
+
+        db_order_id = self._coerce_optional_int(execution_payload.get("db_order_id"))
+        if db_order_id is None:
+            return None
+
+        asset_class = self._coerce_asset_class(signal.asset_class)
+        return PaperExecutionResult(
+            signal_id=signal.id,
+            executed=False,
+            account_id=account.id,
+            asset_class=asset_class,
+            broker_order_id=self._coerce_optional_str(execution_payload.get("broker_order_id")),
+            order_status=self._coerce_optional_order_status(execution_payload.get("status")),
+            db_order_id=db_order_id,
+            db_fill_id=self._coerce_optional_int(execution_payload.get("db_fill_id")),
+            quantity=self._coerce_decimal(execution_payload.get("quantity")),
+            fill_price=self._coerce_decimal(execution_payload.get("fill_price")),
+            reasoning=reasoning_payload,
+            skipped=True,
+            skip_reason="signal_already_executed",
+        )
+
     def _merge_execution_reasoning(
         self,
         *,
@@ -291,3 +328,23 @@ class PaperExecutionEngine:
 
     def _coerce_asset_class(self, value: AssetClass | str) -> AssetClass:
         return value if isinstance(value, AssetClass) else AssetClass(value)
+
+    def _coerce_decimal(self, value: Any) -> Decimal:
+        if value is None:
+            return Decimal("0")
+        return Decimal(str(value))
+
+    def _coerce_optional_int(self, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        return int(value)
+
+    def _coerce_optional_order_status(self, value: Any) -> OrderStatus | None:
+        if value is None or value == "":
+            return None
+        return value if isinstance(value, OrderStatus) else OrderStatus(str(value))
+
+    def _coerce_optional_str(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value)

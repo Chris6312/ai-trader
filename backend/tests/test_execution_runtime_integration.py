@@ -50,7 +50,7 @@ class DummyExecutionEngine:
         return type(
             "ExecutionResult",
             (),
-            {"executed": True, "db_order_id": 9001},
+            {"executed": True, "db_order_id": 9001, "skipped": False, "skip_reason": None},
         )()
 
 
@@ -112,3 +112,28 @@ def test_evaluate_from_candles_with_risk_and_execution_runs_execution_for_approv
     assert result[1].strategy == "trend_continuation"
     assert result[1].executed is False
     assert result[1].execution_order_id is None
+
+
+
+def test_evaluate_from_candles_with_risk_and_execution_copies_template_request(monkeypatch):
+    monkeypatch.setattr(sri, "engine", DummyEngine())
+    monkeypatch.setattr(sri, "risk_engine", DummyRiskEngine())
+    monkeypatch.setattr(sri, "execution_engine", DummyExecutionEngine())
+
+    template_request = PaperExecutionRequest(
+        signal_id=0,
+        quantity=Decimal("1"),
+        fill_price=Decimal("100"),
+    )
+
+    result = sri.evaluate_from_candles_with_risk_and_execution(
+        db=DummyDB(),
+        bundle=DummyBundle(),
+        approval_inputs_by_strategy={"momentum": _approval_input("BTC/USD")},
+        execution_requests_by_strategy={"momentum": template_request},
+        account_id=7,
+    )
+
+    assert result[0].execution_skipped is False
+    assert result[0].execution_skip_reason is None
+    assert template_request.signal_id == 0

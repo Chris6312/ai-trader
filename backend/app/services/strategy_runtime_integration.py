@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,8 @@ class StrategyRuntimeRiskRecord:
     executed: bool = False
     execution_order_id: int | None = None
     execution_error: str | None = None
+    execution_skipped: bool = False
+    execution_skip_reason: str | None = None
 
 
 engine = StrategyEngine()
@@ -106,12 +108,12 @@ def evaluate_from_candles_with_risk_and_execution(
         if record.signal_id is None or record.approved is not True:
             continue
 
-        execution_request = execution_requests_by_strategy.get(record.strategy)
-        if execution_request is None:
+        template_request = execution_requests_by_strategy.get(record.strategy)
+        if template_request is None:
             record.execution_error = "missing_execution_request"
             continue
 
-        execution_request.signal_id = record.signal_id
+        execution_request = replace(template_request, signal_id=record.signal_id)
         try:
             execution_result = execution_engine.execute_approved_signal(db=db, request=execution_request)
         except Exception as exc:  # pragma: no cover - surfaced in runtime record for deterministic inspection
@@ -120,5 +122,7 @@ def evaluate_from_candles_with_risk_and_execution(
 
         record.executed = execution_result.executed
         record.execution_order_id = execution_result.db_order_id
+        record.execution_skipped = execution_result.skipped
+        record.execution_skip_reason = execution_result.skip_reason
 
     return runtime_records

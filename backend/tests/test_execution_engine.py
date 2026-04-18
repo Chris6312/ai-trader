@@ -177,3 +177,41 @@ def test_reconcile_account_state_replaces_stale_positions(
     balance = db_session.execute(select(Balance).where(Balance.account_id == account.id)).scalar_one()
     assert balance.total == Decimal("4987.50000000")
     assert balance.available == Decimal("4987.50000000")
+
+
+def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(db_session, account_id=account.id, asset_class=AssetClass.STOCK, status=SignalStatus.APPROVED)
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    first_result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("2"),
+            fill_price=Decimal("100"),
+        ),
+    )
+    second_result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("2"),
+            fill_price=Decimal("100"),
+        ),
+    )
+
+    assert first_result.executed is True
+    assert second_result.executed is False
+    assert second_result.skipped is True
+    assert second_result.skip_reason == "signal_already_executed"
+    assert second_result.db_order_id == first_result.db_order_id
+    assert second_result.db_fill_id == first_result.db_fill_id
+
+    orders = db_session.execute(select(Order).where(Order.account_id == account.id)).scalars().all()
+    fills = db_session.execute(select(Fill).where(Fill.account_id == account.id)).scalars().all()
+    assert len(orders) == 1
+    assert len(fills) == 1
