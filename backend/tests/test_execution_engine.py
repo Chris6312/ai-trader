@@ -10,8 +10,20 @@ from sqlalchemy.pool import StaticPool
 
 from app.brokers import OrderRequest
 from app.db.base import Base
-from app.models import Account, AccountType, AssetClass, Balance, Fill, Order, OrderSide, OrderType, Position, Signal, SignalStatus
-from app.services.execution_engine import ExecutionError, PaperExecutionEngine, PaperExecutionRequest
+from app.models import (
+    Account,
+    AccountType,
+    AssetClass,
+    Balance,
+    Fill,
+    Order,
+    OrderSide,
+    OrderType,
+    Position,
+    Signal,
+    SignalStatus,
+)
+from app.services.execution_engine import ExecutionAuditRecord, ExecutionError, PaperExecutionEngine, PaperExecutionRequest
 from app.services.paper_accounts import PaperAccountService
 
 
@@ -53,10 +65,18 @@ def _create_account(db: Session, *, asset_class: AssetClass) -> Account:
     return account
 
 
-def _create_signal(db: Session, *, account_id: int, asset_class: AssetClass, status: SignalStatus) -> Signal:
+def _create_signal(
+    db: Session,
+    *,
+    account_id: int,
+    asset_class: AssetClass,
+    status: SignalStatus,
+    symbol: str | None = None,
+) -> Signal:
+    resolved_symbol = symbol or ("AAPL" if asset_class is AssetClass.STOCK else "BTCUSD")
     signal = Signal(
         account_id=account_id,
-        symbol="AAPL" if asset_class is AssetClass.STOCK else "BTCUSD",
+        symbol=resolved_symbol,
         asset_class=asset_class,
         strategy_name="momentum",
         timeframe="1h",
@@ -215,3 +235,91 @@ def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
     fills = db_session.execute(select(Fill).where(Fill.account_id == account.id)).scalars().all()
     assert len(orders) == 1
     assert len(fills) == 1
+
+
+def test_list_recent_executions_returns_execution_audit_records(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("3"),
+            fill_price=Decimal("150.50"),
+        ),
+    )
+
+    records = engine.list_recent_executions(db_session, limit=10)
+
+    assert len(records) == 1
+    record = records[0]
+    assert isinstance(record, ExecutionAuditRecord)
+    assert record.signal_id == signal.id
+    assert record.account_id == account.id
+    assert record.symbol == "AAPL"
+    assert record.asset_class is AssetClass.STOCK
+    assert record.strategy_name == "momentum"
+    assert record.timeframe == "1h"
+    assert record.status is SignalStatus.EXECUTED
+    assert record.quantity == Decimal("3.00000000")
+    assert record.fill_price == Decimal("150.50000000")
+    assert record.execution_summary == "paper execution completed"
+    assert record.skipped is False
+    assert record.skip_reason is None
+
+
+def test_get_execution_summary_counts_executed_signals(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    approved_signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+        symbol="MSFT",
+    )
+    _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.REJECTED,
+        symbol="NVDA",
+    )
+    _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.NEW,
+        symbol="TSLA",
+    )
+
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+    engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=approved_signal.id,
+            quantity=Decimal("1"),
+            fill_price=Decimal("250"),
+        ),
+    )
+
+    summary = engine.get_execution_summary(db_session)
+
+    assert summary["new"] == 1
+    assert summary["approved"] == 0
+    assert summary["rejected"] == 1
+    assert summary["executed"] == 1
+    assert summary["recent_execution_count"] == 1
+    assert summary["recent_skipped_count"] == 0

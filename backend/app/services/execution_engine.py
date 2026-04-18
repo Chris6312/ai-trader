@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.brokers import BrokerError, OrderRequest, OrderSnapshot
@@ -58,6 +58,28 @@ class PaperExecutionResult:
     reasoning: dict[str, Any]
     skipped: bool = False
     skip_reason: str | None = None
+
+
+@dataclass(slots=True)
+class ExecutionAuditRecord:
+    signal_id: int
+    account_id: int | None
+    symbol: str
+    asset_class: AssetClass
+    strategy_name: str
+    timeframe: str
+    status: SignalStatus
+    broker_order_id: str | None
+    db_order_id: int | None
+    db_fill_id: int | None
+    quantity: Decimal
+    fill_price: Decimal
+    execution_summary: str | None
+    executed_at: str | None
+    created_at: str | None
+    skipped: bool
+    skip_reason: str | None
+
 
 
 class PaperExecutionEngine:
@@ -316,6 +338,65 @@ class PaperExecutionEngine:
             "metadata": request.execution_metadata or {},
         }
         return payload
+
+    def list_recent_executions(self, db: Session, *, limit: int = 50) -> list[ExecutionAuditRecord]:
+        rows = (
+            db.execute(
+                select(Signal)
+                .where(Signal.status == SignalStatus.EXECUTED)
+                .order_by(Signal.created_at.desc(), Signal.id.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        records: list[ExecutionAuditRecord] = []
+        for signal in rows:
+            reasoning_payload = self._load_reasoning(signal.reasoning)
+            execution_payload = reasoning_payload.get("execution")
+            if not isinstance(execution_payload, dict):
+                continue
+
+            records.append(
+                ExecutionAuditRecord(
+                    signal_id=signal.id,
+                    account_id=signal.account_id,
+                    symbol=signal.symbol,
+                    asset_class=self._coerce_asset_class(signal.asset_class),
+                    strategy_name=signal.strategy_name,
+                    timeframe=signal.timeframe,
+                    status=signal.status,
+                    broker_order_id=self._coerce_optional_str(execution_payload.get("broker_order_id")),
+                    db_order_id=self._coerce_optional_int(execution_payload.get("db_order_id")),
+                    db_fill_id=self._coerce_optional_int(execution_payload.get("db_fill_id")),
+                    quantity=self._coerce_decimal(execution_payload.get("quantity")),
+                    fill_price=self._coerce_decimal(execution_payload.get("fill_price")),
+                    execution_summary=self._coerce_optional_str(execution_payload.get("summary")),
+                    executed_at=self._coerce_optional_str(execution_payload.get("submitted_at")),
+                    created_at=signal.created_at.isoformat() if signal.created_at is not None else None,
+                    skipped=bool(execution_payload.get("skipped", False)),
+                    skip_reason=self._coerce_optional_str(execution_payload.get("skip_reason")),
+                )
+            )
+
+        return records
+
+    def get_execution_summary(self, db: Session) -> dict[str, int]:
+        signal_counts = {status.value: 0 for status in SignalStatus}
+        for status, count in db.execute(select(Signal.status, func.count(Signal.id)).group_by(Signal.status)).all():
+            key = status.value if hasattr(status, "value") else str(status)
+            signal_counts[key] = int(count)
+
+        recent_records = self.list_recent_executions(db, limit=200)
+        return {
+            "new": signal_counts.get(SignalStatus.NEW.value, 0),
+            "approved": signal_counts.get(SignalStatus.APPROVED.value, 0),
+            "rejected": signal_counts.get(SignalStatus.REJECTED.value, 0),
+            "executed": signal_counts.get(SignalStatus.EXECUTED.value, 0),
+            "recent_execution_count": len(recent_records),
+            "recent_skipped_count": sum(1 for record in recent_records if record.skipped),
+        }
 
     def _load_reasoning(self, raw_reasoning: str | None) -> dict[str, Any]:
         if not raw_reasoning:
