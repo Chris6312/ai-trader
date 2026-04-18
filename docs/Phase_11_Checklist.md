@@ -38,10 +38,10 @@
 - [x] Sentiment scoring tests
 
 ## 11F Regime Detection Service
-- [ ] Regime detection schema
-- [ ] Deterministic regime classification service
-- [ ] Stocks + crypto compatible regime inputs
-- [ ] Regime detection tests
+- [x] Regime detection schema
+- [x] Deterministic regime classification service
+- [x] Stocks + crypto compatible regime inputs
+- [x] Regime detection tests
 
 ## 11G Universe Composer
 - [ ] Unified AI ranking/composition schema

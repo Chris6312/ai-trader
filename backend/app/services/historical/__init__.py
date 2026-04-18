@@ -1,7 +1,9 @@
 from app.services.historical.backfill_planner import BackfillPlanner
 from app.services.historical.feature_builder import FeatureBuilderService
 from app.services.historical.feature_schemas import FeatureBuildSummary, HistoricalFeatureRecord
+from app.services.historical.regime_detection import RegimeDetectionService
 from app.services.historical.sentiment_scoring import SentimentScoringService
+from app.services.historical.regime_detection_schemas import RegimeDetectionRecord, RegimeDetectionSummary
 from app.services.historical.sentiment_scoring_schemas import SentimentInputRecord, SentimentScoreRecord, SentimentScoreSummary
 from app.services.historical.technical_scoring import TechnicalScoringService
 from app.services.historical.technical_scoring_schemas import TechnicalScoreRecord, TechnicalScoreSummary
@@ -25,6 +27,9 @@ __all__ = [
     "HistoricalCandleRecord",
     "IngestionSummary",
     "RateLimiter",
+    "RegimeDetectionRecord",
+    "RegimeDetectionService",
+    "RegimeDetectionSummary",
     "SentimentInputRecord",
     "SentimentScoreRecord",
     "SentimentScoreSummary",
