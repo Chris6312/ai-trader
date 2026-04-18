@@ -1,4 +1,4 @@
-from app.models.ai_research import SymbolRegistry
+from app.models.ai_research import RegimeSnapshot, SentimentSnapshot, SymbolRegistry, TechnicalSnapshot, UniverseSnapshot
 from app.models.market_data import CandleInterval, MarketCandle, MarketDataProvider, SymbolMetadata
 from app.models.trading import (
     Account,
@@ -21,6 +21,10 @@ from app.models.trading import (
 
 __all__ = [
     "SymbolRegistry",
+    "TechnicalSnapshot",
+    "SentimentSnapshot",
+    "RegimeSnapshot",
+    "UniverseSnapshot",
     "CandleInterval",
     "MarketCandle",
     "MarketDataProvider",

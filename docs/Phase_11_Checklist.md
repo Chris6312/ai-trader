@@ -50,9 +50,9 @@
 - [x] Universe composer tests
 
 ## 11H AI Snapshot Persistence Expansion
-- [ ] Snapshot persistence schema updates
-- [ ] DB persistence expansion for AI outputs
-- [ ] Persistence tests
+- [x] Snapshot persistence schema updates
+- [x] DB persistence expansion for AI outputs
+- [x] Persistence tests
 
 ## 11I AI API Endpoints
 - [ ] AI snapshot inspection endpoints
