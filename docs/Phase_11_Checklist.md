@@ -65,6 +65,6 @@
 - [x] Scheduler/runtime tests
 
 ## 11K Audit Documentation
-- [ ] Phase 11 audit write-up
-- [ ] Final checklist reconciliation
-- [ ] Ops notes for daily AI research flow
+- [x] Phase 11 audit write-up
+- [x] Final checklist reconciliation
+- [x] Ops notes for daily AI research flow
