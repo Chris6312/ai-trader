@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.services.execution_engine import (
     ExecutionAuditRecord,
+    ExecutionOutcome,
     PaperExecutionEngine,
     PaperExecutionRequest,
 )
@@ -70,10 +71,11 @@ def _create_account(db: Session, *, asset_class: AssetClass) -> Account:
 def _create_signal(
     db: Session,
     *,
-    account_id: int,
+    account_id: int | None,
     asset_class: AssetClass,
     status: SignalStatus,
     symbol: str | None = None,
+    timeframe: str = "1h",
 ) -> Signal:
     resolved_symbol = symbol or ("AAPL" if asset_class is AssetClass.STOCK else "BTCUSD")
     signal = Signal(
@@ -81,7 +83,7 @@ def _create_signal(
         symbol=resolved_symbol,
         asset_class=asset_class,
         strategy_name="momentum",
-        timeframe="1h",
+        timeframe=timeframe,
         status=status,
         confidence=Decimal("0.90"),
         reasoning=json.dumps({"risk_approval": {"approved": status is SignalStatus.APPROVED}}),
@@ -92,7 +94,7 @@ def _create_signal(
     return signal
 
 
-def test_execute_approved_signal_persists_order_fill_balance_and_position(
+def test_execute_approved_signal_returns_normalized_execution_result(
     db_session: Session,
     paper_account_service: PaperAccountService,
 ) -> None:
@@ -115,9 +117,20 @@ def test_execute_approved_signal_persists_order_fill_balance_and_position(
         ),
     )
 
+    assert result.outcome is ExecutionOutcome.EXECUTED
     assert result.executed is True
+    assert result.skipped is False
+    assert result.signal_id == signal.id
+    assert result.account_id == account.id
+    assert result.asset_class is AssetClass.STOCK
+    assert result.symbol == "AAPL"
+    assert result.quantity == Decimal("10")
+    assert result.fill_price == Decimal("100")
+    assert result.execution_summary == "paper execution completed"
+    assert result.executed_at is not None
     assert result.db_order_id is not None
     assert result.db_fill_id is not None
+    assert result.broker_order_id is not None
     assert result.order_status == "filled"
 
     refreshed_signal = db_session.get(Signal, signal.id)
@@ -177,15 +190,104 @@ def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
         ),
     )
 
-    assert first_result.executed is True
+    assert first_result.outcome is ExecutionOutcome.EXECUTED
+    assert second_result.outcome is ExecutionOutcome.DUPLICATE
     assert second_result.executed is False
     assert second_result.skipped is True
     assert second_result.skip_reason == "signal_already_executed"
+    assert second_result.execution_summary == "duplicate execution attempt skipped"
 
     orders = db_session.execute(select(Order).where(Order.account_id == account.id)).scalars().all()
     fills = db_session.execute(select(Fill).where(Fill.account_id == account.id)).scalars().all()
     assert len(orders) == 1
     assert len(fills) == 1
+
+
+def test_execute_approved_signal_returns_not_approved_outcome(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.REJECTED,
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("1"),
+            fill_price=Decimal("100"),
+        ),
+    )
+
+    assert result.outcome is ExecutionOutcome.NOT_APPROVED
+    assert result.executed is False
+    assert result.skipped is True
+    assert result.skip_reason == "execution_signal_not_approved"
+    assert result.execution_summary == "signal not approved for execution"
+
+
+def test_execute_approved_signal_returns_invalid_outcome_for_validation_errors(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+        timeframe="",
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("0"),
+            fill_price=Decimal("0"),
+        ),
+    )
+
+    assert result.outcome is ExecutionOutcome.INVALID
+    assert result.executed is False
+    assert result.skipped is True
+    assert result.execution_summary == "execution request failed validation"
+    assert "execution_missing_timeframe" in (result.skip_reason or "")
+    assert "execution_invalid_quantity" in (result.skip_reason or "")
+    assert "execution_invalid_price" in (result.skip_reason or "")
+
+
+def test_execute_approved_signal_returns_skipped_outcome_when_signal_missing(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=9999,
+            quantity=Decimal("1"),
+            fill_price=Decimal("100"),
+        ),
+    )
+
+    assert result.outcome is ExecutionOutcome.SKIPPED
+    assert result.executed is False
+    assert result.skipped is True
+    assert result.signal_id == 9999
+    assert result.account_id is None
+    assert result.asset_class is None
+    assert result.symbol is None
+    assert result.skip_reason == "execution_signal_not_found"
+    assert result.execution_summary == "signal not found for execution"
 
 
 def test_list_recent_executions_returns_execution_audit_records(
@@ -274,57 +376,3 @@ def test_get_execution_summary_counts_executed_signals(
     assert summary["executed"] == 1
     assert summary["recent_execution_count"] == 1
     assert summary["recent_skipped_count"] == 0
-
-
-def test_execution_invalid_quantity_is_rejected(
-    db_session: Session,
-    paper_account_service: PaperAccountService,
-) -> None:
-    account = _create_account(db_session, asset_class=AssetClass.STOCK)
-    signal = _create_signal(
-        db_session,
-        account_id=account.id,
-        asset_class=AssetClass.STOCK,
-        status=SignalStatus.APPROVED,
-    )
-    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
-
-    result = engine.execute_approved_signal(
-        db_session,
-        PaperExecutionRequest(
-            signal_id=signal.id,
-            quantity=Decimal("0"),
-            fill_price=Decimal("100"),
-        ),
-    )
-
-    assert result.executed is False
-    assert result.skipped is True
-    assert "execution_invalid_quantity" in (result.skip_reason or "")
-
-
-def test_execution_invalid_price_is_rejected(
-    db_session: Session,
-    paper_account_service: PaperAccountService,
-) -> None:
-    account = _create_account(db_session, asset_class=AssetClass.STOCK)
-    signal = _create_signal(
-        db_session,
-        account_id=account.id,
-        asset_class=AssetClass.STOCK,
-        status=SignalStatus.APPROVED,
-    )
-    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
-
-    result = engine.execute_approved_signal(
-        db_session,
-        PaperExecutionRequest(
-            signal_id=signal.id,
-            quantity=Decimal("1"),
-            fill_price=Decimal("0"),
-        ),
-    )
-
-    assert result.executed is False
-    assert result.skipped is True
-    assert "execution_invalid_price" in (result.skip_reason or "")

@@ -5,7 +5,11 @@ from dataclasses import dataclass, replace
 from sqlalchemy.orm import Session
 
 from app.risk import RiskApprovalInput, RiskApprovalResult
-from app.services.execution_engine import PaperExecutionEngine, PaperExecutionRequest
+from app.services.execution_engine import (
+    ExecutionOutcome,
+    PaperExecutionEngine,
+    PaperExecutionRequest,
+)
 from app.services.risk_engine import RiskEngineService
 from app.services.strategy_engine import StrategyEngine
 from app.strategies.types import StrategyInputBundle
@@ -23,6 +27,9 @@ class StrategyRuntimeRiskRecord:
     execution_error: str | None = None
     execution_skipped: bool = False
     execution_skip_reason: str | None = None
+    execution_outcome: str | None = None
+    execution_summary: str | None = None
+    execution_broker_order_id: str | None = None
 
 
 engine = StrategyEngine()
@@ -124,5 +131,8 @@ def evaluate_from_candles_with_risk_and_execution(
         record.execution_order_id = execution_result.db_order_id
         record.execution_skipped = execution_result.skipped
         record.execution_skip_reason = execution_result.skip_reason
+        record.execution_outcome = execution_result.outcome.value
+        record.execution_summary = execution_result.execution_summary
+        record.execution_broker_order_id = execution_result.broker_order_id
 
     return runtime_records

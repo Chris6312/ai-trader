@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 
 from sqlalchemy import Select, select
@@ -17,6 +18,7 @@ from app.models import (
     Fill,
     Order,
     OrderSide,
+    OrderStatus,
     OrderType,
     Position,
     PositionSide,
@@ -34,14 +36,38 @@ class PaperExecutionRequest:
     execution_metadata: dict[str, Any] | None = None
 
 
+class ExecutionOutcome(str, Enum):
+    EXECUTED = "executed"
+    SKIPPED = "skipped"
+    DUPLICATE = "duplicate"
+    INVALID = "invalid"
+    NOT_APPROVED = "not_approved"
+
+
 @dataclass
 class PaperExecutionResult:
-    executed: bool
-    skipped: bool
+    outcome: ExecutionOutcome
+    signal_id: int
+    account_id: int | None
+    asset_class: AssetClass | None
+    symbol: str | None
+    quantity: Decimal | None
+    fill_price: Decimal | None
     skip_reason: str | None
+    execution_summary: str
+    executed_at: datetime | None
     db_order_id: int | None
     db_fill_id: int | None
-    order_status: str | None
+    broker_order_id: str | None
+    order_status: str | None = None
+
+    @property
+    def executed(self) -> bool:
+        return self.outcome is ExecutionOutcome.EXECUTED
+
+    @property
+    def skipped(self) -> bool:
+        return self.outcome is not ExecutionOutcome.EXECUTED
 
 
 @dataclass
@@ -73,22 +99,43 @@ class PaperExecutionEngine:
     def __init__(self, paper_account_service: PaperAccountService | None = None):
         self.paper_account_service = paper_account_service or PaperAccountService()
 
+    def _build_result(
+        self,
+        *,
+        request: PaperExecutionRequest,
+        signal: Signal | None,
+        outcome: ExecutionOutcome,
+        execution_summary: str,
+        skip_reason: str | None = None,
+        executed_at: datetime | None = None,
+        db_order_id: int | None = None,
+        db_fill_id: int | None = None,
+        broker_order_id: str | None = None,
+        order_status: str | None = None,
+    ) -> PaperExecutionResult:
+        return PaperExecutionResult(
+            outcome=outcome,
+            signal_id=signal.id if signal is not None else request.signal_id,
+            account_id=signal.account_id if signal is not None else None,
+            asset_class=signal.asset_class if signal is not None else None,
+            symbol=signal.symbol if signal is not None else None,
+            quantity=request.quantity,
+            fill_price=request.fill_price,
+            skip_reason=skip_reason,
+            execution_summary=execution_summary,
+            executed_at=executed_at,
+            db_order_id=db_order_id,
+            db_fill_id=db_fill_id,
+            broker_order_id=broker_order_id,
+            order_status=order_status,
+        )
+
     def _validate_request(
         self,
-        signal: Signal | None,
+        signal: Signal,
         request: PaperExecutionRequest,
-    ) -> tuple[bool, list[str]]:
+    ) -> list[str]:
         errors: list[str] = []
-
-        if signal is None:
-            errors.append("execution_signal_not_found")
-            return False, errors
-
-        if signal.status == SignalStatus.EXECUTED:
-            return True, []
-
-        if signal.status is not SignalStatus.APPROVED:
-            errors.append("execution_signal_not_approved")
 
         if not signal.timeframe:
             errors.append("execution_missing_timeframe")
@@ -104,7 +151,7 @@ class PaperExecutionEngine:
         except (TypeError, ValueError):
             errors.append("execution_invalid_metadata")
 
-        return len(errors) == 0, errors
+        return errors
 
     def execute_approved_signal(
         self,
@@ -113,43 +160,55 @@ class PaperExecutionEngine:
     ) -> PaperExecutionResult:
         signal = db.get(Signal, request.signal_id)
 
-        if signal is not None and signal.status == SignalStatus.EXECUTED:
-            return PaperExecutionResult(
-                executed=False,
-                skipped=True,
+        if signal is None:
+            return self._build_result(
+                request=request,
+                signal=None,
+                outcome=ExecutionOutcome.SKIPPED,
+                skip_reason="execution_signal_not_found",
+                execution_summary="signal not found for execution",
+            )
+
+        if signal.status == SignalStatus.EXECUTED:
+            return self._build_result(
+                request=request,
+                signal=signal,
+                outcome=ExecutionOutcome.DUPLICATE,
                 skip_reason="signal_already_executed",
-                db_order_id=None,
-                db_fill_id=None,
-                order_status=None,
+                execution_summary="duplicate execution attempt skipped",
             )
 
-        valid, errors = self._validate_request(signal, request)
-
-        if not valid:
-            return PaperExecutionResult(
-                executed=False,
-                skipped=True,
-                skip_reason=";".join(errors),
-                db_order_id=None,
-                db_fill_id=None,
-                order_status=None,
+        if signal.status is not SignalStatus.APPROVED:
+            return self._build_result(
+                request=request,
+                signal=signal,
+                outcome=ExecutionOutcome.NOT_APPROVED,
+                skip_reason="execution_signal_not_approved",
+                execution_summary="signal not approved for execution",
             )
 
-        assert signal is not None
+        validation_errors = self._validate_request(signal, request)
+        if validation_errors:
+            return self._build_result(
+                request=request,
+                signal=signal,
+                outcome=ExecutionOutcome.INVALID,
+                skip_reason=";".join(validation_errors),
+                execution_summary="execution request failed validation",
+            )
+
         account = db.get(Account, signal.account_id)
         if account is None:
-            return PaperExecutionResult(
-                executed=False,
-                skipped=True,
+            return self._build_result(
+                request=request,
+                signal=signal,
+                outcome=ExecutionOutcome.SKIPPED,
                 skip_reason="execution_account_not_found",
-                db_order_id=None,
-                db_fill_id=None,
-                order_status=None,
+                execution_summary="execution account not found",
             )
 
         broker = self.paper_account_service.get_broker(signal.asset_class)
-
-        broker.place_order(
+        broker_order = broker.place_order(
             OrderRequest(
                 symbol=signal.symbol,
                 side=OrderSide.BUY,
@@ -166,7 +225,7 @@ class PaperExecutionEngine:
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
             quantity=request.quantity,
-            status="filled",
+            status=OrderStatus.FILLED,
         )
         db.add(order)
         db.flush()
@@ -175,11 +234,13 @@ class PaperExecutionEngine:
             account_id=account.id,
             order_id=order.id,
             symbol=signal.symbol,
-            side=OrderSide.BUY,   # <-- REQUIRED
+            side=OrderSide.BUY,
             price=request.fill_price,
             quantity=request.quantity,
         )
         db.add(fill)
+        db.flush()
+        db.refresh(fill)
 
         self.reconcile_account_state(db, account.id, signal.asset_class)
 
@@ -201,13 +262,16 @@ class PaperExecutionEngine:
 
         db.commit()
 
-        return PaperExecutionResult(
-            executed=True,
-            skipped=False,
-            skip_reason=None,
+        return self._build_result(
+            request=request,
+            signal=signal,
+            outcome=ExecutionOutcome.EXECUTED,
+            execution_summary="paper execution completed",
+            executed_at=fill.filled_at,
             db_order_id=order.id,
             db_fill_id=fill.id,
-            order_status="filled",
+            broker_order_id=broker_order.id,
+            order_status=OrderStatus.FILLED.value,
         )
 
     def reconcile_account_state(
