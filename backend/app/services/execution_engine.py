@@ -181,6 +181,7 @@ class PaperExecutionEngine:
         result: PaperExecutionResult,
         *,
         validation_errors: list[ExecutionSkipReason] | None = None,
+        block_name: str = "execution",
     ) -> None:
         reasoning = json.loads(signal.reasoning or "{}")
         errors = [error.value for error in (validation_errors or [])]
@@ -201,7 +202,7 @@ class PaperExecutionEngine:
             },
             "metadata": self._safe_execution_metadata(request),
         }
-        reasoning["execution"] = execution_block
+        reasoning[block_name] = execution_block
         signal.reasoning = json.dumps(reasoning)
         db.add(signal)
 
@@ -229,7 +230,13 @@ class PaperExecutionEngine:
                 skip_reason=ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED,
                 execution_summary="duplicate execution attempt skipped",
             )
-            self._persist_execution_result(db, signal, request, result)
+            self._persist_execution_result(
+                db,
+                signal,
+                request,
+                result,
+                block_name="execution_last_attempt",
+            )
             db.commit()
             return result
 
@@ -432,6 +439,9 @@ class PaperExecutionEngine:
         for s in signals:
             reasoning = json.loads(s.reasoning or "{}")
             exec_block = reasoning.get("execution", {})
+            if str(exec_block.get("status", "")) != ExecutionOutcome.EXECUTED.value:
+                continue
+
             executed_at_raw = exec_block.get("executed_at")
             executed_at = None
             if isinstance(executed_at_raw, str) and executed_at_raw:
@@ -454,12 +464,19 @@ class PaperExecutionEngine:
                     db_fill_id=exec_block.get("db_fill_id"),
                     created_at=s.created_at,
                     executed_at=executed_at,
-                    skipped=str(exec_block.get("status", "")) != ExecutionOutcome.EXECUTED.value,
-                    skip_reason=exec_block.get("skip_reason"),
+                    skipped=False,
+                    skip_reason=None,
                 )
             )
 
-        return results
+        results.sort(
+            key=lambda record: (
+                record.executed_at or record.created_at or datetime.min,
+                record.signal_id,
+            ),
+            reverse=True,
+        )
+        return results[:limit]
 
     def get_execution_summary(
         self,

@@ -73,7 +73,7 @@ They should remain part of Phase 10 history and should not be treated as acciden
 | 10F | Execution result contract normalization | Open | Current result shape still too thin and inconsistent |
 | 10G | Execution reason code registry | Open | Skip reasons still free-text strings |
 | 10H | Execution persistence contract hardening | Open | Execution payload in `Signal.reasoning` still incomplete |
-| 10I | Execution inspection consistency | Open | Recent execution endpoint still reconstructs some fields instead of reading stable persisted truth |
+| 10I | Execution inspection consistency | Complete | Recent execution endpoint now reads persisted execution truth and ignores duplicate-attempt contamination |
 | 10J | Execution boundary separation | Complete | Current execution engine stays out of strategy/risk/candle evaluation |
 
 ---
@@ -230,13 +230,11 @@ It does not yet persist the full stable execution contract needed for replay and
 
 ### 10I - Execution Inspection Consistency
 
+Status: Complete
+
 #### Problem
 `/api/execution/recent` currently reconstructs several values from `Signal.reasoning` and synthetic assumptions.
-Examples:
-- `executed_at` is currently mapped from `Signal.created_at`
-- `broker_order_id`, `db_order_id`, and `db_fill_id` are currently returned as `None`
-
-This works as a temporary lane but is not full audit truth yet.
+This was closed by reading the persisted `reasoning["execution"]` contract as the source of audit truth and preventing duplicate-attempt persistence from overwriting the primary executed record.
 
 #### Required outcome
 Make inspection endpoints reflect stable persisted execution truth.
@@ -248,6 +246,11 @@ Make inspection endpoints reflect stable persisted execution truth.
 - filtered recent and summary endpoints stay deterministic
 - `executed_at` is no longer synthesized from `Signal.created_at`
 
+#### Completion notes
+- recent execution reads now come from the persisted `execution` block
+- duplicate attempts are stored under `execution_last_attempt` so the primary executed audit record stays intact
+- recent execution ordering now uses persisted `executed_at` truth instead of signal creation order
+
 #### Primary files
 - `backend/app/services/execution_engine.py`
 - `backend/app/api/routes/execution.py`
@@ -255,6 +258,22 @@ Make inspection endpoints reflect stable persisted execution truth.
 - `backend/tests/test_execution_api.py`
 
 ---
+
+## Phase 10 Final Status
+
+Phase 10 is now complete.
+
+Completed slices:
+- 10A
+- 10B
+- 10C
+- 10D
+- 10E
+- 10F
+- 10G
+- 10H
+- 10I
+- 10J
 
 ## Explicitly Out of Scope for Phase 10
 

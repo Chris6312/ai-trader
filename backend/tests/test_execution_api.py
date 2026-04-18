@@ -257,3 +257,74 @@ def test_execution_summary_endpoint_supports_account_filter():
     assert payload["approved"] == 0
     assert payload["rejected"] == 0
     assert payload["new"] == 0
+
+def test_recent_execution_endpoint_preserves_primary_execution_truth_after_duplicate_attempt():
+    testing_session_factory = _build_test_sessionmaker()
+
+    with testing_session_factory() as db:
+        signal = _create_executed_signal(db)
+        PaperExecutionEngine().execute_approved_signal(
+            db,
+            PaperExecutionRequest(
+                signal_id=signal.id,
+                quantity=Decimal("3"),
+                fill_price=Decimal("150.50"),
+            ),
+        )
+
+    def override_get_db():
+        db = testing_session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.get("/api/execution/recent")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["symbol"] == "AAPL"
+    assert payload[0]["execution_summary"] == "paper execution completed"
+    assert payload[0]["skipped"] is False
+    assert payload[0]["skip_reason"] is None
+
+
+def test_execution_summary_endpoint_does_not_count_duplicate_attempts_as_recent_skips():
+    testing_session_factory = _build_test_sessionmaker()
+
+    with testing_session_factory() as db:
+        signal = _create_executed_signal(db)
+        PaperExecutionEngine().execute_approved_signal(
+            db,
+            PaperExecutionRequest(
+                signal_id=signal.id,
+                quantity=Decimal("3"),
+                fill_price=Decimal("150.50"),
+            ),
+        )
+
+    def override_get_db():
+        db = testing_session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.get("/api/execution/summary")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["executed"] == 1
+    assert payload["recent_execution_count"] == 1
+    assert payload["recent_skipped_count"] == 0

@@ -211,9 +211,12 @@ def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
     refreshed_signal = db_session.get(Signal, signal.id)
     assert refreshed_signal is not None
     reasoning = json.loads(refreshed_signal.reasoning or "{}")
-    assert reasoning["execution"]["status"] == "duplicate"
-    assert reasoning["execution"]["skip_reason"] == ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED.value
+    assert reasoning["execution"]["status"] == "executed"
+    assert reasoning["execution"]["skip_reason"] is None
     assert reasoning["execution"]["validation"]["valid"] is True
+    assert reasoning["execution_last_attempt"]["status"] == "duplicate"
+    assert reasoning["execution_last_attempt"]["skip_reason"] == ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED.value
+    assert reasoning["execution_last_attempt"]["validation"]["valid"] is True
 
     orders = db_session.execute(select(Order).where(Order.account_id == account.id)).scalars().all()
     fills = db_session.execute(select(Fill).where(Fill.account_id == account.id)).scalars().all()
@@ -450,3 +453,93 @@ def test_get_execution_summary_counts_executed_signals(
     assert summary["executed"] == 1
     assert summary["recent_execution_count"] == 1
     assert summary["recent_skipped_count"] == 0
+
+
+def test_list_recent_executions_keeps_primary_execution_truth_after_duplicate_attempt(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    first_result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("4"),
+            fill_price=Decimal("111.25"),
+        ),
+    )
+    duplicate_result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("4"),
+            fill_price=Decimal("111.25"),
+        ),
+    )
+
+    records = engine.list_recent_executions(db_session, limit=10)
+
+    assert duplicate_result.outcome is ExecutionOutcome.DUPLICATE
+    assert len(records) == 1
+    record = records[0]
+    assert record.signal_id == signal.id
+    assert record.execution_summary == "paper execution completed"
+    assert record.executed_at == first_result.executed_at
+    assert record.db_order_id == first_result.db_order_id
+    assert record.db_fill_id == first_result.db_fill_id
+    assert record.broker_order_id == first_result.broker_order_id
+    assert record.skipped is False
+    assert record.skip_reason is None
+
+
+def test_list_recent_executions_orders_by_persisted_executed_at_desc(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    older_signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+        symbol="MSFT",
+    )
+    newer_signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+        symbol="NVDA",
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    older_result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=older_signal.id,
+            quantity=Decimal("1"),
+            fill_price=Decimal("200"),
+        ),
+    )
+    newer_result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=newer_signal.id,
+            quantity=Decimal("2"),
+            fill_price=Decimal("300"),
+        ),
+    )
+
+    records = engine.list_recent_executions(db_session, limit=10)
+
+    assert [record.signal_id for record in records] == [newer_signal.id, older_signal.id]
+    assert records[0].executed_at == newer_result.executed_at
+    assert records[1].executed_at == older_result.executed_at
