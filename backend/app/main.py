@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from redis import Redis
 
-from app.api import market_data_router, paper_accounts_router
+from app.api import market_data_router, paper_accounts_router, risk_router
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.market_data.kraken import KrakenMarketDataAdapter
@@ -16,7 +16,6 @@ from app.services.market_data import MarketDataService
 from app.services.market_data_runtime import MarketDataRuntimeService
 from app.services.paper_accounts import PaperAccountService
 from app.workers.candle_worker import CandleWorker
-
 
 settings = get_settings()
 
@@ -112,6 +111,7 @@ app.add_middleware(
 
 app.include_router(paper_accounts_router)
 app.include_router(market_data_router)
+app.include_router(risk_router)
 
 
 @app.get("/health")
