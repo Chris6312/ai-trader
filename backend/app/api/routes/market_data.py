@@ -6,7 +6,12 @@ from redis import Redis
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models import CandleInterval
-from app.schemas.market_data_api import CachedQuoteOut, FetchAuditOut, MarketCandleOut
+from app.schemas.market_data_api import (
+    CachedQuoteOut,
+    FetchAuditOut,
+    MarketCandleOut,
+    MarketDataHealthSummaryOut,
+)
 from app.services.market_data import MarketDataService
 
 
@@ -45,3 +50,17 @@ def get_fetch_audit():
     settings = get_settings()
     service = _market_data_service()
     return service.get_fetch_audit(worker_enabled=settings.market_data_worker_enabled)
+
+
+@router.get("/health-summary", response_model=MarketDataHealthSummaryOut)
+def get_health_summary():
+    settings = get_settings()
+    service = _market_data_service()
+    with SessionLocal() as db:
+        return service.get_health_summary(
+            db,
+            crypto_symbols=settings.market_data_crypto_symbols_list,
+            stock_symbols=settings.market_data_stock_symbols_list,
+            intervals=settings.market_data_intervals_list,
+            worker_enabled=settings.market_data_worker_enabled,
+        )

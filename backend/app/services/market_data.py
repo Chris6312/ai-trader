@@ -8,7 +8,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.market_data.schemas import NormalizedCandle, NormalizedQuote, NormalizedSymbolMetadata
-from app.models import CandleInterval, MarketCandle, SymbolMetadata
+from app.models import AssetClass, CandleInterval, MarketCandle, SymbolMetadata
 
 
 class MarketDataService:
@@ -50,7 +50,7 @@ class MarketDataService:
                 select(MarketCandle).where(
                     MarketCandle.provider == candle.provider,
                     MarketCandle.symbol == candle.symbol,
-                    MarketCandle.interval == candle.interval,
+                    MarketCandle.interval == candle.interval.value,
                     MarketCandle.open_time == candle.open_time,
                 )
             )
@@ -111,7 +111,7 @@ class MarketDataService:
             "last": Decimal(data["last"]),
             "mark": Decimal(data["mark"]),
             "volume_24h": Decimal(data["volume_24h"]) if data["volume_24h"] is not None else None,
-            "as_of": datetime.fromisoformat(data["as_of"]),
+            "as_of": self._ensure_aware(datetime.fromisoformat(data["as_of"])),
         }
 
     def list_recent_candles(
@@ -126,12 +126,30 @@ class MarketDataService:
             select(MarketCandle)
             .where(
                 MarketCandle.symbol == symbol,
-                MarketCandle.interval == interval,
+                MarketCandle.interval == interval.value,
             )
             .order_by(desc(MarketCandle.open_time))
             .limit(limit)
         )
         return list(db.scalars(statement).all())
+
+    def get_latest_candle(
+        self,
+        db: Session,
+        *,
+        symbol: str,
+        interval: CandleInterval,
+    ) -> MarketCandle | None:
+        statement = (
+            select(MarketCandle)
+            .where(
+                MarketCandle.symbol == symbol,
+                MarketCandle.interval == interval.value,
+            )
+            .order_by(desc(MarketCandle.open_time))
+            .limit(1)
+        )
+        return db.scalar(statement)
 
     def get_fetch_audit(self, *, worker_enabled: bool) -> dict[str, object]:
         notes = [
@@ -148,5 +166,67 @@ class MarketDataService:
             "notes": notes,
         }
 
+    def get_health_summary(
+        self,
+        db: Session,
+        *,
+        crypto_symbols: tuple[str, ...],
+        stock_symbols: tuple[str, ...],
+        intervals: tuple[str, ...],
+        as_of: datetime | None = None,
+        worker_enabled: bool,
+    ) -> dict[str, object]:
+        as_of = self._ensure_aware(as_of or datetime.now(UTC))
+        interval_enums = [CandleInterval(value) for value in intervals]
+        symbols: list[dict[str, object]] = []
+
+        for asset_class, symbol_list in (
+            (AssetClass.CRYPTO, crypto_symbols),
+            (AssetClass.STOCK, stock_symbols),
+        ):
+            for symbol in symbol_list:
+                quote = self.get_cached_quote(symbol)
+                quote_payload = {
+                    "symbol": symbol,
+                    "present": quote is not None,
+                    "as_of": quote["as_of"] if quote is not None else None,
+                    "age_seconds": int((as_of - quote["as_of"]).total_seconds()) if quote is not None else None,
+                }
+
+                candle_payloads: list[dict[str, object]] = []
+                for interval in interval_enums:
+                    latest = self.get_latest_candle(db, symbol=symbol, interval=interval)
+                    close_time = self._ensure_aware(latest.close_time) if latest is not None else None
+                    candle_payloads.append(
+                        {
+                            "interval": interval,
+                            "present": latest is not None,
+                            "close_time": close_time,
+                            "age_seconds": int((as_of - close_time).total_seconds()) if close_time is not None else None,
+                        }
+                    )
+
+                symbols.append(
+                    {
+                        "asset_class": asset_class,
+                        "symbol": symbol,
+                        "quote": quote_payload,
+                        "candles": candle_payloads,
+                    }
+                )
+
+        return {
+            "worker_enabled": worker_enabled,
+            "crypto_symbols": list(crypto_symbols),
+            "stock_symbols": list(stock_symbols),
+            "intervals": interval_enums,
+            "symbols": symbols,
+        }
+
     def _quote_key(self, symbol: str) -> str:
         return f"market-data:quote:{symbol}"
+
+    def _ensure_aware(self, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)

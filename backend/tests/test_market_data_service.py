@@ -30,7 +30,7 @@ def _build_session_factory():
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-def test_market_data_service_reads_cached_quote_and_recent_candles() -> None:
+def test_market_data_service_reads_cached_quote_recent_candles_and_health_summary() -> None:
     redis_client = FakeRedis()
     service = MarketDataService(redis_client=redis_client)
     redis_client.set(
@@ -99,6 +99,14 @@ def test_market_data_service_reads_cached_quote_and_recent_candles() -> None:
             interval=CandleInterval.MINUTE_5,
             limit=2,
         )
+        summary = service.get_health_summary(
+            db,
+            crypto_symbols=("BTC/USD",),
+            stock_symbols=("AAPL",),
+            intervals=("5m", "1d"),
+            as_of=datetime(2026, 4, 17, 21, 15, tzinfo=UTC),
+            worker_enabled=True,
+        )
 
     quote = service.get_cached_quote("BTC/USD")
     audit = service.get_fetch_audit(worker_enabled=True)
@@ -110,3 +118,7 @@ def test_market_data_service_reads_cached_quote_and_recent_candles() -> None:
     assert candles[0].open_time > candles[1].open_time
     assert audit["closed_candle_owner"] == "candle_worker"
     assert audit["duplicate_fetch_paths_detected"] is False
+    assert summary["worker_enabled"] is True
+    assert summary["symbols"][0]["quote"]["age_seconds"] == 600
+    assert summary["symbols"][0]["candles"][0]["present"] is True
+    assert summary["symbols"][1]["quote"]["present"] is False

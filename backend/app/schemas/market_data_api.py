@@ -48,3 +48,32 @@ class FetchAuditOut(BaseModel):
     duplicate_fetch_paths_detected: bool
     quote_read_paths_allowed: bool
     notes: list[str]
+
+
+class QuoteHealthOut(BaseModel):
+    symbol: str
+    present: bool
+    as_of: datetime | None = None
+    age_seconds: int | None = None
+
+
+class CandleHealthOut(BaseModel):
+    interval: CandleInterval
+    present: bool
+    close_time: datetime | None = None
+    age_seconds: int | None = None
+
+
+class SymbolHealthOut(BaseModel):
+    asset_class: AssetClass
+    symbol: str
+    quote: QuoteHealthOut
+    candles: list[CandleHealthOut]
+
+
+class MarketDataHealthSummaryOut(BaseModel):
+    worker_enabled: bool
+    crypto_symbols: list[str]
+    stock_symbols: list[str]
+    intervals: list[CandleInterval]
+    symbols: list[SymbolHealthOut]

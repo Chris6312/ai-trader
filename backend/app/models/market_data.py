@@ -88,7 +88,11 @@ class MarketCandle(Base):
     )
     symbol: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     interval: Mapped[CandleInterval] = mapped_column(
-        SqlEnum(CandleInterval, name="candle_interval_enum"),
+        SqlEnum(
+            CandleInterval,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            name="candle_interval_enum",
+        ),
         nullable=False,
         index=True,
     )
