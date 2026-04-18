@@ -58,6 +58,41 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TRADIER_API_TOKEN", "TRADIER_TOKEN", "tradier_api_token"),
     )
 
+    alpaca_market_data_base_url: str = Field(
+        default="https://data.alpaca.markets",
+        validation_alias=AliasChoices(
+            "ALPACA_MARKET_DATA_BASE_URL",
+            "alpaca_market_data_base_url",
+        ),
+    )
+    alpaca_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPACA_API_KEY", "alpaca_api_key"),
+    )
+    alpaca_api_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPACA_API_SECRET", "alpaca_api_secret"),
+    )
+    alpaca_default_feed: str = Field(
+        default="iex",
+        validation_alias=AliasChoices("ALPACA_DEFAULT_FEED", "alpaca_default_feed"),
+    )
+    alpaca_rate_limit_per_minute: int = Field(
+        default=180,
+        validation_alias=AliasChoices(
+            "ALPACA_RATE_LIMIT_PER_MINUTE",
+            "alpaca_rate_limit_per_minute",
+        ),
+    )
+    alpaca_stock_batch_size: int = Field(
+        default=100,
+        validation_alias=AliasChoices("ALPACA_STOCK_BATCH_SIZE", "alpaca_stock_batch_size"),
+    )
+    crypto_history_dir: str = Field(
+        default="crypto-history",
+        validation_alias=AliasChoices("CRYPTO_HISTORY_DIR", "crypto_history_dir"),
+    )
+
     market_data_worker_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("MARKET_DATA_WORKER_ENABLED", "market_data_worker_enabled"),
@@ -108,6 +143,13 @@ class Settings(BaseSettings):
     @property
     def market_data_intervals_list(self) -> tuple[str, ...]:
         return self._parse_csv(self.market_data_intervals)
+
+    @property
+    def crypto_history_path(self) -> Path:
+        raw = Path(self.crypto_history_dir)
+        if raw.is_absolute():
+            return raw
+        return ROOT_DIR / raw
 
     def _parse_csv(self, raw_value: str) -> tuple[str, ...]:
         return tuple(item.strip() for item in raw_value.split(",") if item.strip())

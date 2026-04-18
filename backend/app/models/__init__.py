@@ -1,3 +1,4 @@
+from app.models.ai_research import SymbolRegistry
 from app.models.market_data import CandleInterval, MarketCandle, MarketDataProvider, SymbolMetadata
 from app.models.trading import (
     Account,
@@ -19,6 +20,7 @@ from app.models.trading import (
 )
 
 __all__ = [
+    "SymbolRegistry",
     "CandleInterval",
     "MarketCandle",
     "MarketDataProvider",
