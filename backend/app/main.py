@@ -76,7 +76,7 @@ def _market_data_status(app: FastAPI) -> dict[str, object]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.paper_account_service = PaperAccountService()
+    app.state.paper_account_service = PaperAccountService(db_session_factory=SessionLocal)
     app.state.candle_worker = None
     app.state.candle_worker_task = None
 

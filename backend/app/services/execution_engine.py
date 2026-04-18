@@ -165,6 +165,46 @@ class PaperExecutionEngine:
 
         return errors
 
+    def _safe_execution_metadata(self, request: PaperExecutionRequest) -> dict[str, Any]:
+        metadata = request.execution_metadata or {}
+        try:
+            json.dumps(metadata)
+        except (TypeError, ValueError):
+            return {}
+        return dict(metadata)
+
+    def _persist_execution_result(
+        self,
+        db: Session,
+        signal: Signal,
+        request: PaperExecutionRequest,
+        result: PaperExecutionResult,
+        *,
+        validation_errors: list[ExecutionSkipReason] | None = None,
+    ) -> None:
+        reasoning = json.loads(signal.reasoning or "{}")
+        errors = [error.value for error in (validation_errors or [])]
+        execution_block = {
+            "status": result.outcome.value,
+            "summary": result.execution_summary,
+            "timeframe": signal.timeframe or None,
+            "quantity": str(result.quantity) if result.quantity is not None else None,
+            "fill_price": str(result.fill_price) if result.fill_price is not None else None,
+            "executed_at": result.executed_at.isoformat() if result.executed_at is not None else None,
+            "broker_order_id": result.broker_order_id,
+            "db_order_id": result.db_order_id,
+            "db_fill_id": result.db_fill_id,
+            "skip_reason": result.skip_reason,
+            "validation": {
+                "valid": len(errors) == 0,
+                "errors": errors,
+            },
+            "metadata": self._safe_execution_metadata(request),
+        }
+        reasoning["execution"] = execution_block
+        signal.reasoning = json.dumps(reasoning)
+        db.add(signal)
+
     def execute_approved_signal(
         self,
         db: Session,
@@ -182,42 +222,54 @@ class PaperExecutionEngine:
             )
 
         if signal.status == SignalStatus.EXECUTED:
-            return self._build_result(
+            result = self._build_result(
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.DUPLICATE,
                 skip_reason=ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED,
                 execution_summary="duplicate execution attempt skipped",
             )
+            self._persist_execution_result(db, signal, request, result)
+            db.commit()
+            return result
 
         if signal.status is not SignalStatus.APPROVED:
-            return self._build_result(
+            result = self._build_result(
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.NOT_APPROVED,
                 skip_reason=ExecutionSkipReason.SIGNAL_NOT_APPROVED,
                 execution_summary="signal not approved for execution",
             )
+            self._persist_execution_result(db, signal, request, result)
+            db.commit()
+            return result
 
         validation_errors = self._validate_request(signal, request)
         if validation_errors:
-            return self._build_result(
+            result = self._build_result(
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.INVALID,
                 skip_reason=validation_errors[0],
                 execution_summary="execution request failed validation",
             )
+            self._persist_execution_result(db, signal, request, result, validation_errors=validation_errors)
+            db.commit()
+            return result
 
         account = db.get(Account, signal.account_id)
         if account is None:
-            return self._build_result(
+            result = self._build_result(
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.SKIPPED,
                 skip_reason=ExecutionSkipReason.ACCOUNT_NOT_FOUND,
                 execution_summary="execution account not found",
             )
+            self._persist_execution_result(db, signal, request, result)
+            db.commit()
+            return result
 
         broker = self.paper_account_service.get_broker(signal.asset_class)
         broker_order = broker.place_order(
@@ -256,25 +308,8 @@ class PaperExecutionEngine:
 
         self.reconcile_account_state(db, account.id, signal.asset_class)
 
-        reasoning = json.loads(signal.reasoning or "{}")
-        reasoning["execution"] = {
-            "summary": "paper execution completed",
-            "timeframe": signal.timeframe,
-            "quantity": str(request.quantity),
-            "fill_price": str(request.fill_price),
-            "validation": {
-                "valid": True,
-                "errors": [],
-            },
-            "metadata": dict(request.execution_metadata or {}),
-        }
-
-        signal.reasoning = json.dumps(reasoning)
         signal.status = SignalStatus.EXECUTED
-
-        db.commit()
-
-        return self._build_result(
+        result = self._build_result(
             request=request,
             signal=signal,
             outcome=ExecutionOutcome.EXECUTED,
@@ -285,6 +320,9 @@ class PaperExecutionEngine:
             broker_order_id=broker_order.id,
             order_status=OrderStatus.FILLED.value,
         )
+        self._persist_execution_result(db, signal, request, result)
+        db.commit()
+        return result
 
     def reconcile_account_state(
         self,
@@ -394,6 +432,10 @@ class PaperExecutionEngine:
         for s in signals:
             reasoning = json.loads(s.reasoning or "{}")
             exec_block = reasoning.get("execution", {})
+            executed_at_raw = exec_block.get("executed_at")
+            executed_at = None
+            if isinstance(executed_at_raw, str) and executed_at_raw:
+                executed_at = datetime.fromisoformat(executed_at_raw)
 
             results.append(
                 ExecutionAuditRecord(
@@ -407,13 +449,13 @@ class PaperExecutionEngine:
                     quantity=Decimal(str(exec_block.get("quantity", "0"))),
                     fill_price=Decimal(str(exec_block.get("fill_price", "0"))),
                     execution_summary=str(exec_block.get("summary", "")),
-                    broker_order_id=None,
-                    db_order_id=None,
-                    db_fill_id=None,
+                    broker_order_id=exec_block.get("broker_order_id"),
+                    db_order_id=exec_block.get("db_order_id"),
+                    db_fill_id=exec_block.get("db_fill_id"),
                     created_at=s.created_at,
-                    executed_at=s.created_at,
-                    skipped=False,
-                    skip_reason=None,
+                    executed_at=executed_at,
+                    skipped=str(exec_block.get("status", "")) != ExecutionOutcome.EXECUTED.value,
+                    skip_reason=exec_block.get("skip_reason"),
                 )
             )
 

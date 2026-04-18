@@ -3,6 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.brokers import OrderRequest
 from app.main import app
@@ -131,3 +134,37 @@ def test_wipe_account_restores_default_cash_and_clears_state() -> None:
     assert payload["cash_total"] == "1000.00000000"
     assert payload["position_count"] == 0
     assert payload["open_order_count"] == 0
+
+
+def test_reset_balance_persists_across_service_recreation() -> None:
+    from app.db.base import Base
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    first_service = PaperAccountService(
+        stock_initial_cash=Decimal("1000.00000000"),
+        crypto_initial_cash=Decimal("500"),
+        db_session_factory=TestingSessionLocal,
+    )
+    first_service.reset_balance(AssetClass.STOCK, Decimal("2500.00000000"))
+
+    second_service = PaperAccountService(
+        stock_initial_cash=Decimal("1000.00000000"),
+        crypto_initial_cash=Decimal("500"),
+        db_session_factory=TestingSessionLocal,
+    )
+    snapshot = second_service.get_account_snapshot(AssetClass.STOCK)
+
+    assert snapshot.cash_total == Decimal("2500.00000000")
+    assert snapshot.cash_available == Decimal("2500.00000000")
+    assert snapshot.cash_reserved == Decimal("0")
+
+    Base.metadata.drop_all(engine)
+    engine.dispose()

@@ -139,9 +139,19 @@ def test_execute_approved_signal_returns_normalized_execution_result(
     assert refreshed_signal.status is SignalStatus.EXECUTED
 
     reasoning = json.loads(refreshed_signal.reasoning or "{}")
+    assert reasoning["execution"]["status"] == "executed"
     assert reasoning["execution"]["summary"] == "paper execution completed"
     assert reasoning["execution"]["timeframe"] == "1h"
+    assert reasoning["execution"]["quantity"] == "10"
+    assert reasoning["execution"]["fill_price"] == "100"
+    assert reasoning["execution"]["skip_reason"] is None
+    assert reasoning["execution"]["broker_order_id"] == result.broker_order_id
+    assert reasoning["execution"]["db_order_id"] == result.db_order_id
+    assert reasoning["execution"]["db_fill_id"] == result.db_fill_id
+    assert reasoning["execution"]["executed_at"] is not None
     assert reasoning["execution"]["validation"]["valid"] is True
+    assert reasoning["execution"]["validation"]["errors"] == []
+    assert reasoning["execution"]["metadata"] == {"source": "phase_10_test"}
 
     balance = db_session.execute(select(Balance).where(Balance.account_id == account.id)).scalar_one()
     assert balance.total == Decimal("9000.00000000")
@@ -198,6 +208,13 @@ def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
     assert second_result.skip_reason == ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED.value
     assert second_result.execution_summary == "duplicate execution attempt skipped"
 
+    refreshed_signal = db_session.get(Signal, signal.id)
+    assert refreshed_signal is not None
+    reasoning = json.loads(refreshed_signal.reasoning or "{}")
+    assert reasoning["execution"]["status"] == "duplicate"
+    assert reasoning["execution"]["skip_reason"] == ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED.value
+    assert reasoning["execution"]["validation"]["valid"] is True
+
     orders = db_session.execute(select(Order).where(Order.account_id == account.id)).scalars().all()
     fills = db_session.execute(select(Fill).where(Fill.account_id == account.id)).scalars().all()
     assert len(orders) == 1
@@ -232,6 +249,12 @@ def test_execute_approved_signal_returns_not_approved_outcome(
     assert result.skip_reason == ExecutionSkipReason.SIGNAL_NOT_APPROVED.value
     assert result.execution_summary == "signal not approved for execution"
 
+    refreshed_signal = db_session.get(Signal, signal.id)
+    assert refreshed_signal is not None
+    reasoning = json.loads(refreshed_signal.reasoning or "{}")
+    assert reasoning["execution"]["status"] == "not_approved"
+    assert reasoning["execution"]["skip_reason"] == ExecutionSkipReason.SIGNAL_NOT_APPROVED.value
+
 
 def test_execute_approved_signal_returns_invalid_outcome_for_validation_errors(
     db_session: Session,
@@ -258,6 +281,18 @@ def test_execute_approved_signal_returns_invalid_outcome_for_validation_errors(
 
     assert result.outcome is ExecutionOutcome.INVALID
     assert result.executed is False
+
+    refreshed_signal = db_session.get(Signal, signal.id)
+    assert refreshed_signal is not None
+    reasoning = json.loads(refreshed_signal.reasoning or "{}")
+    assert reasoning["execution"]["status"] == "invalid"
+    assert reasoning["execution"]["skip_reason"] == ExecutionSkipReason.MISSING_TIMEFRAME.value
+    assert reasoning["execution"]["validation"]["valid"] is False
+    assert reasoning["execution"]["validation"]["errors"] == [
+        ExecutionSkipReason.MISSING_TIMEFRAME.value,
+        ExecutionSkipReason.INVALID_QUANTITY.value,
+        ExecutionSkipReason.INVALID_FILL_PRICE.value,
+    ]
     assert result.skipped is True
     assert result.execution_summary == "execution request failed validation"
     assert result.skip_reason == ExecutionSkipReason.MISSING_TIMEFRAME.value
@@ -318,6 +353,12 @@ def test_execute_approved_signal_returns_stable_reason_code_for_invalid_metadata
     assert result.skip_reason == ExecutionSkipReason.INVALID_METADATA.value
     assert result.execution_summary == "execution request failed validation"
 
+    refreshed_signal = db_session.get(Signal, signal.id)
+    assert refreshed_signal is not None
+    reasoning = json.loads(refreshed_signal.reasoning or "{}")
+    assert reasoning["execution"]["metadata"] == {}
+    assert reasoning["execution"]["validation"]["errors"] == [ExecutionSkipReason.INVALID_METADATA.value]
+
 
 def test_list_recent_executions_returns_execution_audit_records(
     db_session: Session,
@@ -356,6 +397,10 @@ def test_list_recent_executions_returns_execution_audit_records(
     assert record.quantity == Decimal("3")
     assert record.fill_price == Decimal("150.50")
     assert record.execution_summary == "paper execution completed"
+    assert record.broker_order_id is not None
+    assert record.db_order_id is not None
+    assert record.db_fill_id is not None
+    assert record.executed_at is not None
     assert record.skipped is False
     assert record.skip_reason is None
 

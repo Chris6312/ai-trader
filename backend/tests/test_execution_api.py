@@ -89,6 +89,10 @@ def test_recent_execution_endpoint_returns_execution_payload():
     assert payload[0]["quantity"] == "3"
     assert payload[0]["fill_price"] == "150.50"
     assert payload[0]["execution_summary"] == "paper execution completed"
+    assert payload[0]["broker_order_id"] is not None
+    assert payload[0]["db_order_id"] is not None
+    assert payload[0]["db_fill_id"] is not None
+    assert payload[0]["executed_at"] is not None
 
 
 def test_execution_summary_endpoint_counts_execution_states():
