@@ -2,6 +2,15 @@
 
 ## 11B Historical Data Backbone
 
+## 11C Feature Builder Service
+
+- [x] Historical feature row schema
+- [x] Deterministic feature builder service
+- [x] Warmup handling and summary metadata
+- [x] Price, volume, return, volatility, and trend features
+- [x] Stock + crypto compatible feature generation
+- [x] Feature builder tests
+
 - [x] Shared historical schemas
 - [x] Retention bucket mapping
 - [x] Incremental backfill planner

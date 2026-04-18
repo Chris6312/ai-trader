@@ -1,6 +1,13 @@
 # ENGINEERING STANDARD
 
 ## Phase 11 / 12 historical data policy
+## Phase 11C feature policy
+
+- Feature generation must stay deterministic, provider-agnostic after candle ingestion, and testable in isolation.
+- Phase 11C feature rows are built from closed candles only and do not fit or train models.
+- Initial Phase 11C features are limited to price, volume, return, volatility, and trend-derived metrics.
+- Sentiment, regime labels, and model targets are added in later phases rather than inside the feature-builder service.
+
 
 - Stocks historical research and ML data use Alpaca as the primary source.
 - Crypto historical research and ML data use Kraken CSV files from `crypto-history`.
