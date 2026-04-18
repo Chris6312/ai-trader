@@ -1,428 +1,443 @@
-Phase 12 Checklist
-ML Scoring Engine + Historical Backtesting / Training Pipeline
-PROJECT STATE (Target)
+Below is the **locked-in Phase 12 specification** for AI-Trader-v1.
+This serves two purposes:
 
-Current Phase:
-Phase 12 – Machine Learning scoring layer
+1. **Updated Phase 12 Checklist**
+2. **ML Contract** → defines what ML is allowed to do, what it is NOT allowed to do, and how drift is prevented
 
-Goal:
-Use historical candles + historical features + historical replay/backtesting to train ML models that improve ranking of candidates for:
+Think of this as the constitution for the ML layer 🏛️🤖
+Models may evolve, but the laws of the land remain stable.
 
-trend_continuation
-pullback_reclaim
+---
 
-ML must enhance ranking only.
-ML must not control execution logic.
-ML must not bypass deterministic filters, risk, or execution rails.
+# Phase 12 Checklist (Updated)
 
-Phase 12A — Historical Training Universe Freeze
+## Phase 12 — ML Scoring Engine + Historical Backtesting / Training Pipeline
 
-Purpose:
-Create the historical universe snapshot set used for replay and model training.
+### 12A — Historical Training Universe Freeze
+
+Create replay-safe symbol membership snapshots so training data reflects what was actually tradable at each decision date.
 
 Requirements:
 
-freeze symbol membership by date
-support stocks and crypto separately
-avoid survivorship bias where practical
-preserve delisted/missing-history handling rules
-store source-of-truth symbol registry snapshots for each replay period
+* freeze symbol membership by decision_date
+* separate stock and crypto universes
+* avoid survivorship bias where practical
+* persist symbol registry snapshot references
+* store universe metadata:
 
-Inputs:
-
-Phase 11 symbol registry
-yFinance stock history
-Kraken/crypto historical symbol universe
-
-Deliverables:
-
-historical universe snapshot table or persisted snapshots
-replay-ready symbol membership by date
-Phase 12B — Historical Feature Store Builder
-
-Purpose:
-Build feature rows for each symbol on each historical decision date.
-
-Each row should contain:
-
-symbol
-asset_class
-decision_date
-strategy_eligibility flags
-regime state
-technical features
-sentiment features if available
-feature_schema_version
-
-Important:
-
-These must be the same feature definitions used in live scoring.
-
-Constraints:
-
-features must only use data available up to that historical decision date
-no future leakage
-no forward-looking values in rolling indicators
-all features timestamped by decision date
+  * source
+  * snapshot timestamp
+  * asset class
+  * inclusion rationale version
+* ensure future feature rows derive only from information available at decision time
 
 Deliverables:
 
-historical feature store builder
-persisted feature table(s)
-feature validation checks for leakage prevention
-Phase 12C — Historical Strategy Replay / Backtesting Engine
+* historical_universe_snapshots table
+* persistence service
+* replay-safe lookup methods
+* tests proving membership immutability
 
-Purpose:
-Replay historical dates as if the bot were running live, so we can determine which candidates actually followed through.
+---
 
-This is the missing bridge.
+### 12B — Historical Feature Store Builder
 
-The replay engine should:
+Create point-in-time feature snapshots for every symbol in the historical universe.
 
-iterate historical decision dates
-load only features available on that date
-apply deterministic eligibility filters
-assign candidate symbols to:
-trend_continuation
-pullback_reclaim
-avoid
-simulate what the AI/ML layer would have seen on that day
-measure what happened afterward over the defined forward window
+Features must be reproducible using only past data.
 
-This is not execution backtesting at first.
-This is candidate follow-through replay.
+Feature categories:
 
-Outputs per symbol/date:
+* price structure
+* volatility
+* volume behavior
+* regime context
+* sentiment signals
+* derived strategy indicators
 
-was eligible or not
-strategy bucket
-forward return windows
-max favorable excursion
-max adverse excursion
-structure invalidation flag
-follow-through success/failure label
+Examples:
 
-Deliverables:
+* SMA/EMA stacks
+* ATR %
+* relative volume
+* breakout structure features
+* pullback structure features
+* regime flags
+* sentiment score snapshots
 
-historical replay engine
-replay result table
-per-strategy replay metrics
-Phase 12D — Label Generation from Historical Replay
+Requirements:
 
-Purpose:
-Turn replay outcomes into supervised learning labels.
-
-Labels must be generated from replay results, not guessed directly from raw returns.
-
-Trend Continuation label examples
-
-Success if, over next N bars:
-
-forward return exceeds threshold
-structure remains intact
-no major invalidation below reference level
-favorable excursion exceeds minimum target
-
-Possible fields:
-
-trend_success_binary
-trend_forward_return_n
-trend_mfe_n
-trend_mae_n
-trend_invalidation_flag
-Pullback Reclaim label examples
-
-Success if, over next N bars:
-
-reclaim level holds
-forward return exceeds threshold
-trend spine remains intact
-price does not immediately fail below reclaim zone
-
-Possible fields:
-
-reclaim_success_binary
-reclaim_forward_return_n
-reclaim_mfe_n
-reclaim_mae_n
-reclaim_failure_flag
-
-Constraints:
-
-labels must be deterministic
-labels must be reproducible
-labels must be versioned
+* no future leakage
+* versioned feature definitions
+* deterministic feature calculation
+* reproducible dataset builds
 
 Deliverables:
 
-label generation module
-strategy-specific label definitions
-label version registry
-Phase 12E — Backtesting Policy Definitions
+* feature store schema
+* feature generation services
+* feature version tracking
 
-Purpose:
-Lock how historical replay decides success/failure so training does not drift.
+---
 
-Must define:
+### 12C — Historical Strategy Replay / Backtesting Engine
 
-decision timeframe
-forward evaluation window
-benchmark comparisons if used
-success threshold
-failure threshold
-structure invalidation rules
-missing-bar handling
-corporate action / split handling for stocks where applicable
-weekend/24-7 handling differences for crypto
+Replay strategies using historical candles and frozen universes.
 
-Example policies:
+Reconstruct decision context as if the bot were running live at each historical timestamp.
 
-Trend Continuation
-evaluate next 5 bars or 10 bars
-success requires minimum forward return or ATR multiple
-fail if structure breaks before target-quality move occurs
-Pullback Reclaim
-evaluate next 3 bars or 5 bars
-success requires reclaim hold plus positive follow-through
-fail if reclaim level breaks quickly
+Requirements:
 
-Deliverables:
+* reuse deterministic strategy logic
+* reuse deterministic risk rules
+* simulate trade lifecycle
+* simulate exit policies
+* track entry signals
+* track exit triggers
+* store replay results
 
-replay/backtest policy doc
-policy constants in code
-versioned policy identifier on replay results
-Phase 12F — Training Dataset Builder
+Replay outputs:
 
-Purpose:
-Assemble final ML-ready dataset from:
-
-historical feature store
-historical replay outputs
-generated labels
-
-Each training row:
-
-symbol
-asset_class
-decision_date
-strategy_bucket
-feature vector
-regime state
-label(s)
-replay policy version
-feature version
-label version
-
-Constraints:
-
-one row per symbol per decision date per strategy context
-no future leakage
-training dataset reproducible from stored snapshots
+* entry decision context
+* exit outcome
+* trade duration
+* max favorable excursion
+* max adverse excursion
 
 Deliverables:
 
-training dataset builder service
-exportable ML dataset
-dataset integrity checks
-Phase 12G — Baseline ML Model
+* replay engine service
+* replay result persistence
+* deterministic reproducibility tests
 
-Purpose:
-Train initial models using replay-derived labels.
+---
 
-Initial model types:
+### 12D — Label Generation from Historical Replay
 
-LogisticRegression
-RandomForest
-XGBoost
+Create ML labels using replay outcomes.
 
-Recommended v1:
+Labels derived from:
 
-one model per strategy
-trend_continuation model
-pullback_reclaim model
+* forward returns
+* trade success criteria
+* strategy-specific success thresholds
 
-Model output:
+Examples:
 
-probability of successful follow-through
-ranking score
-optional confidence band
+* profitable trade within max_hold_hours
+* target reached before stop
+* follow-through strength
+* drawdown constraints
 
-Constraints:
+Requirements:
 
-model must be explainable
-model must not replace deterministic strategy eligibility
-model must score only eligible candidates
+* labels derived only from replay results
+* no future leakage
+* versioned label policy definitions
 
 Deliverables:
 
-training pipeline
-saved model artifacts
-model metadata persistence
-Phase 12H — Walk-Forward Backtesting / Validation
+* label generator service
+* label schema
+* label version metadata
 
-Purpose:
-Validate model performance the way it would have behaved historically.
+---
 
-Process:
+### 12E — Backtesting Policy Definitions
 
-train on prior window
-score next unseen window
-compare predictions against replay-derived outcomes
-roll forward and repeat
+Define the rule set governing replay and labeling behavior.
 
-Example windows:
+Includes:
 
-Stocks:
+* trade evaluation window
+* success criteria
+* acceptable drawdown levels
+* regime-aware evaluation adjustments
 
-train on prior 12–24 months
-test on next 1–2 months
+Policies must be versioned.
 
-Crypto:
+Deliverables:
 
-train on prior 6–12 months
-test on next 2–4 weeks
+* backtesting policy schema
+* policy registry
+* policy version tracking
+
+---
+
+### 12F — Training Dataset Builder
+
+Assemble final ML dataset.
+
+Dataset combines:
+
+* historical universe membership
+* point-in-time feature rows
+* replay-derived labels
+* regime classification
+* strategy context
+
+Requirements:
+
+* version dataset builds
+* include dataset metadata
+* maintain reproducibility
+
+Deliverables:
+
+* dataset builder service
+* dataset version schema
+
+---
+
+### 12G — Baseline ML Model
+
+Train initial model(s).
+
+Initial scope:
+
+* one model per strategy
+* gradient boosted trees or equivalent
+* interpretable feature inputs
+
+Strategies:
+
+* pullback_reclaim
+* trend_continuation
+
+Deliverables:
+
+* baseline model artifacts
+* training pipeline
+* hyperparameter configuration
+
+---
+
+### 12H — Walk-Forward Backtesting / Validation
+
+Validate models using walk-forward methodology.
+
+Evaluate:
+
+* predictive power stability
+* regime performance differences
+* degradation behavior
 
 Metrics:
 
-precision
-recall
-rank correlation
-top-N hit rate
-success rate of top decile candidates
-stability by regime
-stability by asset class
-
-Important:
-
-This is where historical backtesting directly supports ML training quality.
+* win rate
+* average return
+* drawdown profile
+* calibration quality
 
 Deliverables:
 
-walk-forward validation runner
-per-window validation reports
-summary evaluation report
-Phase 12I — Feature Importance + Drift Review
+* walk-forward validation reports
+* validation metric persistence
 
-Purpose:
-Understand what the model is learning and whether that changes over time.
+---
 
-Review:
+### 12I — Feature Importance + Drift Review
 
-feature importance
-importance drift by retrain period
-regime-specific feature behavior
-asset-class-specific feature behavior
+Generate explainability artifacts.
 
-Deliverables:
+Methods:
 
-feature importance reports
-drift monitoring outputs
-Phase 12J — ML Scoring Integration
+* SHAP importance
+* permutation importance
+* tree-based importance
 
-Purpose:
-Integrate model scores into the universe composer.
+Track:
 
-Composite example:
-
-composite_score =
-0.40 technical_score +
-0.20 sentiment_score +
-0.15 regime_alignment_score +
-0.25 ml_followthrough_score
-
-Constraints:
-
-ML can rank only after deterministic filters pass
-ML cannot create unsupported symbols
-ML cannot bypass risk or execution
-ML cannot modify open-position management rules
+* global importance
+* regime-specific importance
+* strategy-specific importance
+* drift signals
 
 Deliverables:
 
-ML score integration in universe composer
-ranked output including model score
-Phase 12K — Retraining Schedule
+* feature importance persistence
+* drift metrics persistence
 
-Purpose:
-Define how the model stays current without constant churn.
+---
 
-Schedule:
+### 12J — ML Scoring Integration
 
-daily: score current candidates
-weekly: retrain model
-monthly: deeper performance review
+Integrate model scoring into candidate ranking flow.
 
-Recommended retrain cadence:
+ML responsibilities:
 
-weekend retraining
-stocks: rolling 12–24 month window
-crypto: rolling 6–12 month window
+* rank eligible candidates
+* produce confidence scores
+* provide explanation payloads
 
-Deliverables:
+ML must not:
 
-retrain script
-model versioning
-retrain metadata persistence
-Phase 12L — Model Persistence and Reproducibility
-
-Purpose:
-Ensure any score can be traced back to:
-
-model version
-training window
-replay policy version
-feature version
-label version
+* bypass deterministic filters
+* override risk controls
+* override execution constraints
 
 Deliverables:
 
-model registry table or metadata persistence
-reproducibility metadata on scored outputs
-Phase 12M — ML Inspection API
+* scoring service
+* ranking integration logic
 
-Endpoints:
+---
 
-GET /api/ml/model-info
-GET /api/ml/feature-importance
-GET /api/ml/symbol-score/{symbol}
-GET /api/ml/validation/latest
+### 12K — Retraining Schedule
 
-Constraints:
+Define retraining cadence.
 
-read-only
-inspectable
-tied to versioned artifacts
-Phase 12N — Audit Guard
+Examples:
 
-Create:
+* weekly retraining
+* rolling dataset updates
+* drift-triggered retraining
 
-docs/Phase_12_Checklist.md
-docs/Phase_12_Audit.md
+Deliverables:
 
-Must document:
+* retrain scheduler config
+* retrain job pipeline
 
-how replay/backtesting creates labels
-how walk-forward validation is performed
-what ML is allowed to influence
-what ML is forbidden to influence
-Phase 12 Complete When
-historical replay engine exists
-replay outputs generate deterministic labels
-ML training uses replay-derived outcomes
-walk-forward validation is green enough to justify ranking use
-ML improves candidate ranking without touching execution logic
-all scoring is reproducible and inspectable
-The key correction
+---
 
-The missing architecture piece is:
+### 12L — Model Persistence and Reproducibility
 
-historical candles
-→ historical features by decision date
-→ historical strategy replay/backtesting
-→ deterministic labels
-→ ML training dataset
-→ model training
-→ walk-forward validation
-→ live ranking score
+Persist model artifacts and metadata.
 
-That replay/backtesting layer is what makes the ML legitimate instead of decorative wallpaper.
+Track:
+
+* dataset version
+* feature version
+* label version
+* policy version
+* training window
+* hyperparameters
+
+Deliverables:
+
+* model registry
+* artifact storage references
+
+---
+
+### 12M — ML Transparency UI + API Contract
+
+Expose what the model learned.
+
+Includes:
+
+Global learning view:
+
+* top feature importance
+* SHAP summary
+* permutation importance
+* regime importance
+
+Per-trade explanation view:
+
+* score
+* probability
+* baseline expectation
+* positive contributors
+* negative contributors
+* feature snapshot
+
+Model health view:
+
+* validation metrics
+* walk-forward metrics
+* calibration
+* confusion matrix
+* score bucket returns
+* drift signals
+
+Frontend pages:
+
+* ML Overview
+* Model Registry
+* Symbol Explain Drawer
+
+Deliverables:
+
+* ML transparency endpoints
+* React pages
+* explanation payload schema
+
+---
+
+### 12N — ML Runtime Controls + Guardrails
+
+Add operator controls.
+
+Runtime controls:
+
+* ML mode:
+
+  * OFF
+  * OBSERVE
+  * ASSIST
+  * ACTIVE
+* active model selector
+* rollback to previous model
+* minimum score threshold
+* asset scope selection
+* emergency ML disable
+
+Guardrails:
+
+* regime scope
+* session scope
+* drift fail-safe
+* drawdown disable trigger
+* data freshness gating
+
+All changes must be:
+
+* auditable
+* reversible
+* confirmed
+
+Deliverables:
+
+* runtime config schema
+* runtime control endpoints
+* audit logging
+
+---
+
+### 12O — ML Inspection API + Strategy Learning Panels
+
+Provide deeper inspection surfaces.
+
+Strategy panels:
+
+* feature importance by strategy
+* regime performance by strategy
+* model comparison views
+* version change impact
+
+Deliverables:
+
+* inspection endpoints
+* strategy learning panels
+
+---
+
+### 12P — Audit Guard + Deployment Safety
+
+Ensure safe model deployment lifecycle.
+
+Capabilities:
+
+* retrain candidate approval
+* model promotion
+* rollback
+* freeze model version
+* track change history
+
+Deliverables:
+
+* audit event persistence
+* deployment approval flow
+
+---
