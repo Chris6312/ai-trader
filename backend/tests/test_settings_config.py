@@ -23,6 +23,9 @@ def test_settings_accept_existing_env_example_names(tmp_path: Path) -> None:
                 "MARKET_DATA_STOCK_SYMBOLS=AAPL,MSFT",
                 "MARKET_DATA_CRYPTO_SYMBOLS=BTC/USD,ETH/USD",
                 "MARKET_DATA_INTERVALS=5m,1d",
+                "AI_RESEARCH_SCHEDULER_ENABLED=true",
+                "AI_RESEARCH_STARTUP_RUN_ENABLED=false",
+                "AI_RESEARCH_DAILY_RUN_TIME=08:40",
             ]
         ),
         encoding="utf-8",
@@ -41,3 +44,24 @@ def test_settings_accept_existing_env_example_names(tmp_path: Path) -> None:
     assert settings.market_data_stock_symbols_list == ("AAPL", "MSFT")
     assert settings.market_data_crypto_symbols_list == ("BTC/USD", "ETH/USD")
     assert settings.market_data_intervals_list == ("5m", "1d")
+
+
+
+def test_settings_parse_ai_scheduler_options(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AI_RESEARCH_SCHEDULER_ENABLED=true",
+                "AI_RESEARCH_STARTUP_RUN_ENABLED=true",
+                "AI_RESEARCH_DAILY_RUN_TIME=08:40",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=str(env_file))
+
+    assert settings.ai_research_scheduler_enabled is True
+    assert settings.ai_research_startup_run_enabled is True
+    assert settings.ai_research_daily_run_time == "08:40"

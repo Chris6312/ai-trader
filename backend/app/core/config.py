@@ -114,6 +114,19 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MARKET_DATA_INTERVALS", "market_data_intervals"),
     )
 
+    ai_research_scheduler_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("AI_RESEARCH_SCHEDULER_ENABLED", "ai_research_scheduler_enabled"),
+    )
+    ai_research_startup_run_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("AI_RESEARCH_STARTUP_RUN_ENABLED", "ai_research_startup_run_enabled"),
+    )
+    ai_research_daily_run_time: str = Field(
+        default="08:40",
+        validation_alias=AliasChoices("AI_RESEARCH_DAILY_RUN_TIME", "ai_research_daily_run_time"),
+    )
+
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",

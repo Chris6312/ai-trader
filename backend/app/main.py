@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.market_data.kraken import KrakenMarketDataAdapter
 from app.market_data.tradier import TradierMarketDataAdapter
+from app.services.historical.ai_scheduler import AIResearchSchedulerService
 from app.services.market_data import MarketDataService
 from app.services.market_data_runtime import MarketDataRuntimeService
 from app.services.paper_accounts import PaperAccountService
@@ -41,6 +42,34 @@ def _build_candle_worker() -> CandleWorker:
         fetch_delay_seconds=settings.market_data_fetch_delay_seconds,
     )
 
+
+
+
+def _build_ai_research_scheduler() -> AIResearchSchedulerService:
+    return AIResearchSchedulerService(
+        timezone_name=settings.app_timezone,
+        daily_run_time=settings.ai_research_daily_run_time,
+        enabled=settings.ai_research_scheduler_enabled,
+        startup_run_enabled=settings.ai_research_startup_run_enabled,
+    )
+
+
+def _ai_research_status(app: FastAPI) -> dict[str, object]:
+    scheduler = getattr(app.state, "ai_research_scheduler", None)
+    scheduler_task = getattr(app.state, "ai_research_scheduler_task", None)
+
+    if scheduler is not None:
+        status = scheduler.get_status()
+    else:
+        scheduler = _build_ai_research_scheduler()
+        status = scheduler.get_status()
+
+    status.update(
+        {
+            "scheduler_task_active": bool(scheduler_task is not None and not scheduler_task.done()),
+        }
+    )
+    return status
 
 def _market_data_status(app: FastAPI) -> dict[str, object]:
     worker = getattr(app.state, "candle_worker", None)
@@ -79,21 +108,34 @@ async def lifespan(app: FastAPI):
     app.state.paper_account_service = PaperAccountService(db_session_factory=SessionLocal)
     app.state.candle_worker = None
     app.state.candle_worker_task = None
+    app.state.ai_research_scheduler = None
+    app.state.ai_research_scheduler_task = None
 
     if settings.market_data_worker_enabled:
         worker = _build_candle_worker()
         app.state.candle_worker = worker
         app.state.candle_worker_task = asyncio.create_task(worker.run())
 
+    if settings.ai_research_scheduler_enabled:
+        scheduler = _build_ai_research_scheduler()
+        app.state.ai_research_scheduler = scheduler
+        app.state.ai_research_scheduler_task = asyncio.create_task(scheduler.run())
+
     try:
         yield
     finally:
         worker = getattr(app.state, "candle_worker", None)
         worker_task = getattr(app.state, "candle_worker_task", None)
+        scheduler = getattr(app.state, "ai_research_scheduler", None)
+        scheduler_task = getattr(app.state, "ai_research_scheduler_task", None)
         if worker is not None:
             worker.stop()
+        if scheduler is not None:
+            scheduler.stop()
         if worker_task is not None:
             await worker_task
+        if scheduler_task is not None:
+            await scheduler_task
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -128,3 +170,7 @@ def health() -> dict[str, str]:
 @app.get("/api/market-data/worker-status")
 def market_data_worker_status() -> dict[str, object]:
     return _market_data_status(app)
+
+@app.get("/api/ai/scheduler-status")
+def ai_research_scheduler_status() -> dict[str, object]:
+    return _ai_research_status(app)

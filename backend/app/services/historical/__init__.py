@@ -1,4 +1,5 @@
 from app.services.historical.backfill_planner import BackfillPlanner
+from app.services.historical.ai_scheduler import AIResearchSchedulerService
 from app.services.historical.feature_builder import FeatureBuilderService
 from app.services.historical.feature_schemas import FeatureBuildSummary, HistoricalFeatureRecord
 from app.services.historical.regime_detection import RegimeDetectionService
@@ -21,6 +22,7 @@ from app.services.historical.schemas import (
 )
 
 __all__ = [
+    "AIResearchSchedulerService",
     "BackfillPlan",
     "BackfillPlanner",
     "CandleRetentionPolicy",

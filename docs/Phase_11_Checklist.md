@@ -60,9 +60,9 @@
 - [x] API tests
 
 ## 11J Daily Scheduler Integration
-- [ ] Once-daily AI enrichment wiring
-- [ ] Startup + 08:40 universe build integration
-- [ ] Scheduler/runtime tests
+- [x] Once-daily AI enrichment wiring
+- [x] Startup + 08:40 universe build integration
+- [x] Scheduler/runtime tests
 
 ## 11K Audit Documentation
 - [ ] Phase 11 audit write-up
