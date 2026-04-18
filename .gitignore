@@ -30,6 +30,7 @@ htmlcov/
 
 # IDE / Editor
 .vscode/
+.vs/
 .idea/
 
 # OS files
@@ -47,3 +48,5 @@ pnpm-debug.log*
 # Alembic / local DB leftovers
 *.db
 *.sqlite3
+
+crypto-history/
