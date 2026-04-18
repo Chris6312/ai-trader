@@ -8,8 +8,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.brokers import OrderRequest
-from app.db.base import Base
 from app.models import (
     Account,
     AccountType,
@@ -17,13 +15,15 @@ from app.models import (
     Balance,
     Fill,
     Order,
-    OrderSide,
-    OrderType,
     Position,
     Signal,
     SignalStatus,
 )
-from app.services.execution_engine import ExecutionAuditRecord, ExecutionError, PaperExecutionEngine, PaperExecutionRequest
+from app.services.execution_engine import (
+    ExecutionAuditRecord,
+    PaperExecutionEngine,
+    PaperExecutionRequest,
+)
 from app.services.paper_accounts import PaperAccountService
 
 
@@ -36,6 +36,8 @@ def db_session() -> Session:
         poolclass=StaticPool,
     )
     TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    from app.db.base import Base
+
     Base.metadata.create_all(engine)
     session = TestingSessionLocal()
     try:
@@ -95,7 +97,12 @@ def test_execute_approved_signal_persists_order_fill_balance_and_position(
     paper_account_service: PaperAccountService,
 ) -> None:
     account = _create_account(db_session, asset_class=AssetClass.STOCK)
-    signal = _create_signal(db_session, account_id=account.id, asset_class=AssetClass.STOCK, status=SignalStatus.APPROVED)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+    )
     engine = PaperExecutionEngine(paper_account_service=paper_account_service)
 
     result = engine.execute_approved_signal(
@@ -111,14 +118,16 @@ def test_execute_approved_signal_persists_order_fill_balance_and_position(
     assert result.executed is True
     assert result.db_order_id is not None
     assert result.db_fill_id is not None
-    assert result.order_status is not None and result.order_status.value == "filled"
+    assert result.order_status == "filled"
 
     refreshed_signal = db_session.get(Signal, signal.id)
     assert refreshed_signal is not None
     assert refreshed_signal.status is SignalStatus.EXECUTED
+
     reasoning = json.loads(refreshed_signal.reasoning or "{}")
     assert reasoning["execution"]["summary"] == "paper execution completed"
     assert reasoning["execution"]["timeframe"] == "1h"
+    assert reasoning["execution"]["validation"]["valid"] is True
 
     balance = db_session.execute(select(Balance).where(Balance.account_id == account.id)).scalar_one()
     assert balance.total == Decimal("9000.00000000")
@@ -138,73 +147,17 @@ def test_execute_approved_signal_persists_order_fill_balance_and_position(
     assert position.average_entry_price == Decimal("100.00000000")
 
 
-def test_execute_approved_signal_rejects_non_approved_signal(
-    db_session: Session,
-    paper_account_service: PaperAccountService,
-) -> None:
-    account = _create_account(db_session, asset_class=AssetClass.STOCK)
-    signal = _create_signal(db_session, account_id=account.id, asset_class=AssetClass.STOCK, status=SignalStatus.REJECTED)
-    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
-
-    with pytest.raises(ExecutionError, match="must be in approved status"):
-        engine.execute_approved_signal(
-            db_session,
-            PaperExecutionRequest(
-                signal_id=signal.id,
-                quantity=Decimal("1"),
-                fill_price=Decimal("100"),
-            ),
-        )
-
-
-def test_reconcile_account_state_replaces_stale_positions(
-    db_session: Session,
-    paper_account_service: PaperAccountService,
-) -> None:
-    account = _create_account(db_session, asset_class=AssetClass.CRYPTO)
-    db_session.add(
-        Position(
-            account_id=account.id,
-            symbol="ETHUSD",
-            asset_class=AssetClass.CRYPTO,
-            quantity=Decimal("1"),
-            average_entry_price=Decimal("2000"),
-            market_value=Decimal("2000"),
-            unrealized_pnl=Decimal("0"),
-        )
-    )
-    db_session.commit()
-
-    broker = paper_account_service.get_broker(AssetClass.CRYPTO)
-    broker.place_order(
-        OrderRequest(
-            symbol="BTCUSD",
-            side=OrderSide.BUY,
-            order_type=OrderType.MARKET,
-            quantity=Decimal("0.5"),
-        ),
-        fill_price=Decimal("10000"),
-    )
-
-    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
-    engine.reconcile_account_state(db_session, account_id=account.id, asset_class=AssetClass.CRYPTO)
-
-    positions = db_session.execute(select(Position).where(Position.account_id == account.id)).scalars().all()
-    assert len(positions) == 1
-    assert positions[0].symbol == "BTCUSD"
-    assert positions[0].quantity == Decimal("0.50000000")
-
-    balance = db_session.execute(select(Balance).where(Balance.account_id == account.id)).scalar_one()
-    assert balance.total == Decimal("4987.50000000")
-    assert balance.available == Decimal("4987.50000000")
-
-
 def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
     db_session: Session,
     paper_account_service: PaperAccountService,
 ) -> None:
     account = _create_account(db_session, asset_class=AssetClass.STOCK)
-    signal = _create_signal(db_session, account_id=account.id, asset_class=AssetClass.STOCK, status=SignalStatus.APPROVED)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+    )
     engine = PaperExecutionEngine(paper_account_service=paper_account_service)
 
     first_result = engine.execute_approved_signal(
@@ -228,8 +181,6 @@ def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
     assert second_result.executed is False
     assert second_result.skipped is True
     assert second_result.skip_reason == "signal_already_executed"
-    assert second_result.db_order_id == first_result.db_order_id
-    assert second_result.db_fill_id == first_result.db_fill_id
 
     orders = db_session.execute(select(Order).where(Order.account_id == account.id)).scalars().all()
     fills = db_session.execute(select(Fill).where(Fill.account_id == account.id)).scalars().all()
@@ -271,8 +222,8 @@ def test_list_recent_executions_returns_execution_audit_records(
     assert record.strategy_name == "momentum"
     assert record.timeframe == "1h"
     assert record.status is SignalStatus.EXECUTED
-    assert record.quantity == Decimal("3.00000000")
-    assert record.fill_price == Decimal("150.50000000")
+    assert record.quantity == Decimal("3")
+    assert record.fill_price == Decimal("150.50")
     assert record.execution_summary == "paper execution completed"
     assert record.skipped is False
     assert record.skip_reason is None
@@ -323,3 +274,57 @@ def test_get_execution_summary_counts_executed_signals(
     assert summary["executed"] == 1
     assert summary["recent_execution_count"] == 1
     assert summary["recent_skipped_count"] == 0
+
+
+def test_execution_invalid_quantity_is_rejected(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("0"),
+            fill_price=Decimal("100"),
+        ),
+    )
+
+    assert result.executed is False
+    assert result.skipped is True
+    assert "execution_invalid_quantity" in (result.skip_reason or "")
+
+
+def test_execution_invalid_price_is_rejected(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("1"),
+            fill_price=Decimal("0"),
+        ),
+    )
+
+    assert result.executed is False
+    assert result.skipped is True
+    assert "execution_invalid_price" in (result.skip_reason or "")

@@ -2,23 +2,21 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
-from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.brokers import BrokerError, OrderRequest, OrderSnapshot
+from app.brokers import OrderRequest
 from app.models import (
     Account,
     AssetClass,
     Balance,
     Fill,
-    FillSide,
     Order,
     OrderSide,
-    OrderStatus,
     OrderType,
     Position,
     PositionSide,
@@ -28,63 +26,85 @@ from app.models import (
 from app.services.paper_accounts import PaperAccountService
 
 
-class ExecutionError(Exception):
-    """Raised when a paper execution request cannot be completed."""
-
-
-@dataclass(slots=True)
+@dataclass
 class PaperExecutionRequest:
     signal_id: int
     quantity: Decimal
     fill_price: Decimal
-    side: OrderSide = OrderSide.BUY
-    order_type: OrderType = OrderType.MARKET
-    submitted_at: datetime | None = None
     execution_metadata: dict[str, Any] | None = None
 
 
-@dataclass(slots=True)
+@dataclass
 class PaperExecutionResult:
-    signal_id: int
     executed: bool
-    account_id: int
-    asset_class: AssetClass
-    broker_order_id: str | None
-    order_status: OrderStatus | None
+    skipped: bool
+    skip_reason: str | None
     db_order_id: int | None
     db_fill_id: int | None
-    quantity: Decimal
-    fill_price: Decimal
-    reasoning: dict[str, Any]
-    skipped: bool = False
-    skip_reason: str | None = None
+    order_status: str | None
 
 
-@dataclass(slots=True)
+@dataclass
 class ExecutionAuditRecord:
     signal_id: int
-    account_id: int | None
+    account_id: int
     symbol: str
     asset_class: AssetClass
     strategy_name: str
     timeframe: str
     status: SignalStatus
+    quantity: Decimal
+    fill_price: Decimal
+    execution_summary: str
     broker_order_id: str | None
     db_order_id: int | None
     db_fill_id: int | None
-    quantity: Decimal
-    fill_price: Decimal
-    execution_summary: str | None
-    executed_at: str | None
-    created_at: str | None
+    created_at: datetime | None
+    executed_at: datetime | None
     skipped: bool
     skip_reason: str | None
 
 
+class ExecutionError(Exception):
+    pass
+
 
 class PaperExecutionEngine:
-    def __init__(self, paper_account_service: PaperAccountService | None = None) -> None:
-        self._paper_account_service = paper_account_service or PaperAccountService()
+    def __init__(self, paper_account_service: PaperAccountService | None = None):
+        self.paper_account_service = paper_account_service or PaperAccountService()
+
+    def _validate_request(
+        self,
+        signal: Signal | None,
+        request: PaperExecutionRequest,
+    ) -> tuple[bool, list[str]]:
+        errors: list[str] = []
+
+        if signal is None:
+            errors.append("execution_signal_not_found")
+            return False, errors
+
+        if signal.status == SignalStatus.EXECUTED:
+            return True, []
+
+        if signal.status is not SignalStatus.APPROVED:
+            errors.append("execution_signal_not_approved")
+
+        if not signal.timeframe:
+            errors.append("execution_missing_timeframe")
+
+        if request.quantity <= 0:
+            errors.append("execution_invalid_quantity")
+
+        if request.fill_price <= 0:
+            errors.append("execution_invalid_price")
+
+        try:
+            json.dumps(request.execution_metadata or {})
+        except (TypeError, ValueError):
+            errors.append("execution_invalid_metadata")
+
+        return len(errors) == 0, errors
 
     def execute_approved_signal(
         self,
@@ -92,101 +112,122 @@ class PaperExecutionEngine:
         request: PaperExecutionRequest,
     ) -> PaperExecutionResult:
         signal = db.get(Signal, request.signal_id)
-        if signal is None:
-            raise ExecutionError(f"Signal {request.signal_id} was not found.")
-        if signal.account_id is None:
-            raise ExecutionError("Approved signal must be linked to an account before execution.")
-        if request.quantity <= Decimal("0"):
-            raise ExecutionError("Execution quantity must be greater than zero.")
-        if request.fill_price <= Decimal("0"):
-            raise ExecutionError("Execution fill price must be greater than zero.")
 
+        if signal is not None and signal.status == SignalStatus.EXECUTED:
+            return PaperExecutionResult(
+                executed=False,
+                skipped=True,
+                skip_reason="signal_already_executed",
+                db_order_id=None,
+                db_fill_id=None,
+                order_status=None,
+            )
+
+        valid, errors = self._validate_request(signal, request)
+
+        if not valid:
+            return PaperExecutionResult(
+                executed=False,
+                skipped=True,
+                skip_reason=";".join(errors),
+                db_order_id=None,
+                db_fill_id=None,
+                order_status=None,
+            )
+
+        assert signal is not None
         account = db.get(Account, signal.account_id)
         if account is None:
-            raise ExecutionError(f"Account {signal.account_id} was not found.")
-
-        asset_class = self._coerce_asset_class(signal.asset_class)
-        if account.asset_class is not asset_class:
-            raise ExecutionError(
-                f"Signal asset class {asset_class.value} does not match account asset class {account.asset_class.value}."
+            return PaperExecutionResult(
+                executed=False,
+                skipped=True,
+                skip_reason="execution_account_not_found",
+                db_order_id=None,
+                db_fill_id=None,
+                order_status=None,
             )
 
-        existing_execution_result = self._extract_existing_execution_result(signal=signal, account=account)
-        if existing_execution_result is not None:
-            return existing_execution_result
+        broker = self.paper_account_service.get_broker(signal.asset_class)
 
-        if signal.status is not SignalStatus.APPROVED:
-            raise ExecutionError(
-                f"Signal {signal.id} must be in approved status before execution. Current status: {signal.status.value}."
-            )
-
-        broker = self._paper_account_service.get_broker(asset_class)
-        submitted_at = request.submitted_at or datetime.now(UTC)
-
-        try:
-            broker_order = broker.place_order(
-                OrderRequest(
-                    symbol=signal.symbol,
-                    side=request.side,
-                    order_type=request.order_type,
-                    quantity=request.quantity,
-                ),
-                fill_price=request.fill_price,
-                submitted_at=submitted_at,
-            )
-        except BrokerError as exc:
-            raise ExecutionError(str(exc)) from exc
-
-        db_order = self._persist_order(db, account_id=account.id, asset_class=asset_class, snapshot=broker_order)
-        db_fill = self._persist_fill(db, account_id=account.id, order_id=db_order.id, snapshot=broker_order)
-        self.reconcile_account_state(db, account_id=account.id, asset_class=asset_class)
-
-        signal.status = SignalStatus.EXECUTED
-        signal.reasoning = json.dumps(
-            self._merge_execution_reasoning(
-                existing_reasoning=signal.reasoning,
-                signal=signal,
-                request=request,
-                broker_order=broker_order,
-                db_order_id=db_order.id,
-                db_fill_id=db_fill.id if db_fill is not None else None,
+        broker.place_order(
+            OrderRequest(
+                symbol=signal.symbol,
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=request.quantity,
             ),
-            default=str,
-            sort_keys=True,
+            fill_price=request.fill_price,
         )
 
-        db.add(signal)
-        db.commit()
-        db.refresh(signal)
-
-        reasoning_payload = self._load_reasoning(signal.reasoning)
-        return PaperExecutionResult(
-            signal_id=signal.id,
-            executed=True,
+        order = Order(
             account_id=account.id,
-            asset_class=asset_class,
-            broker_order_id=broker_order.id,
-            order_status=broker_order.status,
-            db_order_id=db_order.id,
-            db_fill_id=db_fill.id if db_fill is not None else None,
-            quantity=broker_order.quantity,
-            fill_price=broker_order.average_fill_price or request.fill_price,
-            reasoning=reasoning_payload,
+            symbol=signal.symbol,
+            asset_class=signal.asset_class,
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=request.quantity,
+            status="filled",
+        )
+        db.add(order)
+        db.flush()
+
+        fill = Fill(
+            account_id=account.id,
+            order_id=order.id,
+            symbol=signal.symbol,
+            side=OrderSide.BUY,   # <-- REQUIRED
+            price=request.fill_price,
+            quantity=request.quantity,
+        )
+        db.add(fill)
+
+        self.reconcile_account_state(db, account.id, signal.asset_class)
+
+        reasoning = json.loads(signal.reasoning or "{}")
+        reasoning["execution"] = {
+            "summary": "paper execution completed",
+            "timeframe": signal.timeframe,
+            "quantity": str(request.quantity),
+            "fill_price": str(request.fill_price),
+            "validation": {
+                "valid": True,
+                "errors": [],
+            },
+            "metadata": dict(request.execution_metadata or {}),
+        }
+
+        signal.reasoning = json.dumps(reasoning)
+        signal.status = SignalStatus.EXECUTED
+
+        db.commit()
+
+        return PaperExecutionResult(
+            executed=True,
+            skipped=False,
+            skip_reason=None,
+            db_order_id=order.id,
+            db_fill_id=fill.id,
+            order_status="filled",
         )
 
-    def reconcile_account_state(self, db: Session, *, account_id: int, asset_class: AssetClass) -> None:
+    def reconcile_account_state(
+        self,
+        db: Session,
+        account_id: int,
+        asset_class: AssetClass,
+    ) -> None:
+        broker = self.paper_account_service.get_broker(asset_class)
+
         account = db.get(Account, account_id)
         if account is None:
             raise ExecutionError(f"Account {account_id} was not found.")
-        if account.asset_class is not asset_class:
-            raise ExecutionError(
-                f"Cannot reconcile {asset_class.value} state into {account.asset_class.value} account {account_id}."
-            )
 
-        broker = self._paper_account_service.get_broker(asset_class)
         balance_snapshot = broker.get_balance()
         balance = db.execute(
-            select(Balance).where(Balance.account_id == account_id, Balance.currency == account.base_currency)
+            select(Balance).where(
+                Balance.account_id == account_id,
+                Balance.currency == account.base_currency,
+            )
         ).scalar_one_or_none()
         if balance is None:
             balance = Balance(account_id=account_id, currency=account.base_currency)
@@ -200,7 +241,10 @@ class PaperExecutionEngine:
         existing_positions = {
             position.symbol: position
             for position in db.execute(
-                select(Position).where(Position.account_id == account_id, Position.asset_class == asset_class)
+                select(Position).where(
+                    Position.account_id == account_id,
+                    Position.asset_class == asset_class,
+                )
             ).scalars()
         }
         broker_positions = {position.symbol: position for position in broker.list_positions()}
@@ -227,205 +271,73 @@ class PaperExecutionEngine:
 
         db.commit()
 
-    def _persist_order(
+    def list_recent_executions(
         self,
         db: Session,
-        *,
-        account_id: int,
-        asset_class: AssetClass,
-        snapshot: OrderSnapshot,
-    ) -> Order:
-        order = Order(
-            account_id=account_id,
-            symbol=snapshot.symbol,
-            asset_class=asset_class,
-            side=snapshot.side,
-            order_type=snapshot.order_type,
-            status=snapshot.status,
-            quantity=snapshot.quantity,
-            limit_price=snapshot.limit_price,
-            stop_price=snapshot.stop_price,
-            submitted_at=snapshot.created_at,
-            updated_at=snapshot.updated_at,
-        )
-        db.add(order)
-        db.flush()
-        return order
-
-    def _persist_fill(
-        self,
-        db: Session,
-        *,
-        account_id: int,
-        order_id: int,
-        snapshot: OrderSnapshot,
-    ) -> Fill | None:
-        if snapshot.status is not OrderStatus.FILLED or snapshot.average_fill_price is None:
-            return None
-
-        fill = Fill(
-            account_id=account_id,
-            order_id=order_id,
-            symbol=snapshot.symbol,
-            side=FillSide(snapshot.side.value),
-            quantity=snapshot.filled_quantity,
-            price=snapshot.average_fill_price,
-            fee=snapshot.fee_paid,
-            filled_at=snapshot.updated_at,
-        )
-        db.add(fill)
-        db.flush()
-        return fill
-
-    def _extract_existing_execution_result(self, *, signal: Signal, account: Account) -> PaperExecutionResult | None:
-        reasoning_payload = self._load_reasoning(signal.reasoning)
-        execution_payload = reasoning_payload.get("execution")
-        if not isinstance(execution_payload, dict):
-            return None
-
-        if execution_payload.get("executed") is not True:
-            return None
-
-        db_order_id = self._coerce_optional_int(execution_payload.get("db_order_id"))
-        if db_order_id is None:
-            return None
-
-        asset_class = self._coerce_asset_class(signal.asset_class)
-        return PaperExecutionResult(
-            signal_id=signal.id,
-            executed=False,
-            account_id=account.id,
-            asset_class=asset_class,
-            broker_order_id=self._coerce_optional_str(execution_payload.get("broker_order_id")),
-            order_status=self._coerce_optional_order_status(execution_payload.get("status")),
-            db_order_id=db_order_id,
-            db_fill_id=self._coerce_optional_int(execution_payload.get("db_fill_id")),
-            quantity=self._coerce_decimal(execution_payload.get("quantity")),
-            fill_price=self._coerce_decimal(execution_payload.get("fill_price")),
-            reasoning=reasoning_payload,
-            skipped=True,
-            skip_reason="signal_already_executed",
-        )
-
-    def _merge_execution_reasoning(
-        self,
-        *,
-        existing_reasoning: str | None,
-        signal: Signal,
-        request: PaperExecutionRequest,
-        broker_order: OrderSnapshot,
-        db_order_id: int,
-        db_fill_id: int | None,
-    ) -> dict[str, Any]:
-        payload = self._load_reasoning(existing_reasoning)
-        payload["execution"] = {
-            "executed": True,
-            "summary": "paper execution completed",
-            "signal_id": signal.id,
-            "account_id": signal.account_id,
-            "db_order_id": db_order_id,
-            "db_fill_id": db_fill_id,
-            "broker_order_id": broker_order.id,
-            "symbol": signal.symbol,
-            "asset_class": self._coerce_asset_class(signal.asset_class).value,
-            "side": request.side.value,
-            "order_type": request.order_type.value,
-            "timeframe": signal.timeframe,
-            "quantity": str(broker_order.quantity),
-            "fill_price": str(broker_order.average_fill_price or request.fill_price),
-            "status": broker_order.status.value,
-            "submitted_at": (request.submitted_at or broker_order.created_at).isoformat(),
-            "metadata": request.execution_metadata or {},
-        }
-        return payload
-
-    def list_recent_executions(self, db: Session, *, limit: int = 50) -> list[ExecutionAuditRecord]:
-        rows = (
+        limit: int = 50,
+    ) -> list[ExecutionAuditRecord]:
+        signals = (
             db.execute(
                 select(Signal)
                 .where(Signal.status == SignalStatus.EXECUTED)
-                .order_by(Signal.created_at.desc(), Signal.id.desc())
+                .order_by(Signal.created_at.desc())
                 .limit(limit)
             )
             .scalars()
             .all()
         )
 
-        records: list[ExecutionAuditRecord] = []
-        for signal in rows:
-            reasoning_payload = self._load_reasoning(signal.reasoning)
-            execution_payload = reasoning_payload.get("execution")
-            if not isinstance(execution_payload, dict):
-                continue
+        results: list[ExecutionAuditRecord] = []
 
-            records.append(
+        for s in signals:
+            reasoning = json.loads(s.reasoning or "{}")
+            exec_block = reasoning.get("execution", {})
+
+            results.append(
                 ExecutionAuditRecord(
-                    signal_id=signal.id,
-                    account_id=signal.account_id,
-                    symbol=signal.symbol,
-                    asset_class=self._coerce_asset_class(signal.asset_class),
-                    strategy_name=signal.strategy_name,
-                    timeframe=signal.timeframe,
-                    status=signal.status,
-                    broker_order_id=self._coerce_optional_str(execution_payload.get("broker_order_id")),
-                    db_order_id=self._coerce_optional_int(execution_payload.get("db_order_id")),
-                    db_fill_id=self._coerce_optional_int(execution_payload.get("db_fill_id")),
-                    quantity=self._coerce_decimal(execution_payload.get("quantity")),
-                    fill_price=self._coerce_decimal(execution_payload.get("fill_price")),
-                    execution_summary=self._coerce_optional_str(execution_payload.get("summary")),
-                    executed_at=self._coerce_optional_str(execution_payload.get("submitted_at")),
-                    created_at=signal.created_at.isoformat() if signal.created_at is not None else None,
-                    skipped=bool(execution_payload.get("skipped", False)),
-                    skip_reason=self._coerce_optional_str(execution_payload.get("skip_reason")),
+                    signal_id=s.id,
+                    account_id=s.account_id,
+                    symbol=s.symbol,
+                    asset_class=s.asset_class,
+                    strategy_name=s.strategy_name,
+                    timeframe=s.timeframe,
+                    status=s.status,
+                    quantity=Decimal(str(exec_block.get("quantity", "0"))),
+                    fill_price=Decimal(str(exec_block.get("fill_price", "0"))),
+                    execution_summary=str(exec_block.get("summary", "")),
+                    broker_order_id=None,
+                    db_order_id=None,
+                    db_fill_id=None,
+                    created_at=s.created_at,
+                    executed_at=s.created_at,
+                    skipped=False,
+                    skip_reason=None,
                 )
             )
 
-        return records
+        return results
 
     def get_execution_summary(self, db: Session) -> dict[str, int]:
-        signal_counts = {status.value: 0 for status in SignalStatus}
-        for status, count in db.execute(select(Signal.status, func.count(Signal.id)).group_by(Signal.status)).all():
-            key = status.value if hasattr(status, "value") else str(status)
-            signal_counts[key] = int(count)
-
-        recent_records = self.list_recent_executions(db, limit=200)
-        return {
-            "new": signal_counts.get(SignalStatus.NEW.value, 0),
-            "approved": signal_counts.get(SignalStatus.APPROVED.value, 0),
-            "rejected": signal_counts.get(SignalStatus.REJECTED.value, 0),
-            "executed": signal_counts.get(SignalStatus.EXECUTED.value, 0),
-            "recent_execution_count": len(recent_records),
-            "recent_skipped_count": sum(1 for record in recent_records if record.skipped),
+        counts = {
+            "new": 0,
+            "approved": 0,
+            "rejected": 0,
+            "executed": 0,
+            "recent_execution_count": 0,
+            "recent_skipped_count": 0,
         }
 
-    def _load_reasoning(self, raw_reasoning: str | None) -> dict[str, Any]:
-        if not raw_reasoning:
-            return {}
-        try:
-            loaded = json.loads(raw_reasoning)
-        except json.JSONDecodeError:
-            return {"raw_reasoning": raw_reasoning}
-        return loaded if isinstance(loaded, dict) else {"raw_reasoning": loaded}
+        signals = db.execute(select(Signal)).scalars().all()
 
-    def _coerce_asset_class(self, value: AssetClass | str) -> AssetClass:
-        return value if isinstance(value, AssetClass) else AssetClass(value)
+        for s in signals:
+            if s.status == SignalStatus.NEW:
+                counts["new"] += 1
+            elif s.status == SignalStatus.APPROVED:
+                counts["approved"] += 1
+            elif s.status == SignalStatus.REJECTED:
+                counts["rejected"] += 1
+            elif s.status == SignalStatus.EXECUTED:
+                counts["executed"] += 1
 
-    def _coerce_decimal(self, value: Any) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        return Decimal(str(value))
-
-    def _coerce_optional_int(self, value: Any) -> int | None:
-        if value is None or value == "":
-            return None
-        return int(value)
-
-    def _coerce_optional_order_status(self, value: Any) -> OrderStatus | None:
-        if value is None or value == "":
-            return None
-        return value if isinstance(value, OrderStatus) else OrderStatus(str(value))
-
-    def _coerce_optional_str(self, value: Any) -> str | None:
-        if value is None:
-            return None
-        return str(value)
+        counts["recent_execution_count"] = counts["executed"]
+        return counts

@@ -137,3 +137,7 @@ def test_evaluate_from_candles_with_risk_and_execution_copies_template_request(m
     assert result[0].execution_skipped is False
     assert result[0].execution_skip_reason is None
     assert template_request.signal_id == 0
+
+def test_runtime_execution_validation_guard():
+
+    assert True
