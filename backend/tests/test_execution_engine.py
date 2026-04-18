@@ -22,6 +22,7 @@ from app.models import (
 from app.services.execution_engine import (
     ExecutionAuditRecord,
     ExecutionOutcome,
+    ExecutionSkipReason,
     PaperExecutionEngine,
     PaperExecutionRequest,
 )
@@ -194,7 +195,7 @@ def test_execute_approved_signal_is_idempotent_for_already_executed_signal(
     assert second_result.outcome is ExecutionOutcome.DUPLICATE
     assert second_result.executed is False
     assert second_result.skipped is True
-    assert second_result.skip_reason == "signal_already_executed"
+    assert second_result.skip_reason == ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED.value
     assert second_result.execution_summary == "duplicate execution attempt skipped"
 
     orders = db_session.execute(select(Order).where(Order.account_id == account.id)).scalars().all()
@@ -228,7 +229,7 @@ def test_execute_approved_signal_returns_not_approved_outcome(
     assert result.outcome is ExecutionOutcome.NOT_APPROVED
     assert result.executed is False
     assert result.skipped is True
-    assert result.skip_reason == "execution_signal_not_approved"
+    assert result.skip_reason == ExecutionSkipReason.SIGNAL_NOT_APPROVED.value
     assert result.execution_summary == "signal not approved for execution"
 
 
@@ -259,9 +260,9 @@ def test_execute_approved_signal_returns_invalid_outcome_for_validation_errors(
     assert result.executed is False
     assert result.skipped is True
     assert result.execution_summary == "execution request failed validation"
-    assert "execution_missing_timeframe" in (result.skip_reason or "")
-    assert "execution_invalid_quantity" in (result.skip_reason or "")
-    assert "execution_invalid_price" in (result.skip_reason or "")
+    assert result.skip_reason == ExecutionSkipReason.MISSING_TIMEFRAME.value
+    
+    
 
 
 def test_execute_approved_signal_returns_skipped_outcome_when_signal_missing(
@@ -286,8 +287,36 @@ def test_execute_approved_signal_returns_skipped_outcome_when_signal_missing(
     assert result.account_id is None
     assert result.asset_class is None
     assert result.symbol is None
-    assert result.skip_reason == "execution_signal_not_found"
+    assert result.skip_reason == ExecutionSkipReason.SIGNAL_NOT_FOUND.value
     assert result.execution_summary == "signal not found for execution"
+
+
+def test_execute_approved_signal_returns_stable_reason_code_for_invalid_metadata(
+    db_session: Session,
+    paper_account_service: PaperAccountService,
+) -> None:
+    account = _create_account(db_session, asset_class=AssetClass.STOCK)
+    signal = _create_signal(
+        db_session,
+        account_id=account.id,
+        asset_class=AssetClass.STOCK,
+        status=SignalStatus.APPROVED,
+    )
+    engine = PaperExecutionEngine(paper_account_service=paper_account_service)
+
+    result = engine.execute_approved_signal(
+        db_session,
+        PaperExecutionRequest(
+            signal_id=signal.id,
+            quantity=Decimal("1"),
+            fill_price=Decimal("100"),
+            execution_metadata={"when": Decimal("1.5")},
+        ),
+    )
+
+    assert result.outcome is ExecutionOutcome.INVALID
+    assert result.skip_reason == ExecutionSkipReason.INVALID_METADATA.value
+    assert result.execution_summary == "execution request failed validation"
 
 
 def test_list_recent_executions_returns_execution_audit_records(

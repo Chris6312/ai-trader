@@ -44,6 +44,18 @@ class ExecutionOutcome(str, Enum):
     NOT_APPROVED = "not_approved"
 
 
+class ExecutionSkipReason(str, Enum):
+    SIGNAL_NOT_FOUND = "SIGNAL_NOT_FOUND"
+    SIGNAL_NOT_APPROVED = "SIGNAL_NOT_APPROVED"
+    SIGNAL_ALREADY_EXECUTED = "SIGNAL_ALREADY_EXECUTED"
+    INVALID_QUANTITY = "INVALID_QUANTITY"
+    INVALID_FILL_PRICE = "INVALID_FILL_PRICE"
+    INVALID_METADATA = "INVALID_METADATA"
+    MISSING_TIMEFRAME = "MISSING_TIMEFRAME"
+    ACCOUNT_NOT_FOUND = "ACCOUNT_NOT_FOUND"
+    EXECUTION_ERROR = "EXECUTION_ERROR"
+
+
 @dataclass
 class PaperExecutionResult:
     outcome: ExecutionOutcome
@@ -106,7 +118,7 @@ class PaperExecutionEngine:
         signal: Signal | None,
         outcome: ExecutionOutcome,
         execution_summary: str,
-        skip_reason: str | None = None,
+        skip_reason: ExecutionSkipReason | None = None,
         executed_at: datetime | None = None,
         db_order_id: int | None = None,
         db_fill_id: int | None = None,
@@ -121,7 +133,7 @@ class PaperExecutionEngine:
             symbol=signal.symbol if signal is not None else None,
             quantity=request.quantity,
             fill_price=request.fill_price,
-            skip_reason=skip_reason,
+            skip_reason=skip_reason.value if skip_reason is not None else None,
             execution_summary=execution_summary,
             executed_at=executed_at,
             db_order_id=db_order_id,
@@ -134,22 +146,22 @@ class PaperExecutionEngine:
         self,
         signal: Signal,
         request: PaperExecutionRequest,
-    ) -> list[str]:
-        errors: list[str] = []
+    ) -> list[ExecutionSkipReason]:
+        errors: list[ExecutionSkipReason] = []
 
         if not signal.timeframe:
-            errors.append("execution_missing_timeframe")
+            errors.append(ExecutionSkipReason.MISSING_TIMEFRAME)
 
         if request.quantity <= 0:
-            errors.append("execution_invalid_quantity")
+            errors.append(ExecutionSkipReason.INVALID_QUANTITY)
 
         if request.fill_price <= 0:
-            errors.append("execution_invalid_price")
+            errors.append(ExecutionSkipReason.INVALID_FILL_PRICE)
 
         try:
             json.dumps(request.execution_metadata or {})
         except (TypeError, ValueError):
-            errors.append("execution_invalid_metadata")
+            errors.append(ExecutionSkipReason.INVALID_METADATA)
 
         return errors
 
@@ -165,7 +177,7 @@ class PaperExecutionEngine:
                 request=request,
                 signal=None,
                 outcome=ExecutionOutcome.SKIPPED,
-                skip_reason="execution_signal_not_found",
+                skip_reason=ExecutionSkipReason.SIGNAL_NOT_FOUND,
                 execution_summary="signal not found for execution",
             )
 
@@ -174,7 +186,7 @@ class PaperExecutionEngine:
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.DUPLICATE,
-                skip_reason="signal_already_executed",
+                skip_reason=ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED,
                 execution_summary="duplicate execution attempt skipped",
             )
 
@@ -183,7 +195,7 @@ class PaperExecutionEngine:
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.NOT_APPROVED,
-                skip_reason="execution_signal_not_approved",
+                skip_reason=ExecutionSkipReason.SIGNAL_NOT_APPROVED,
                 execution_summary="signal not approved for execution",
             )
 
@@ -193,7 +205,7 @@ class PaperExecutionEngine:
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.INVALID,
-                skip_reason=";".join(validation_errors),
+                skip_reason=validation_errors[0],
                 execution_summary="execution request failed validation",
             )
 
@@ -203,7 +215,7 @@ class PaperExecutionEngine:
                 request=request,
                 signal=signal,
                 outcome=ExecutionOutcome.SKIPPED,
-                skip_reason="execution_account_not_found",
+                skip_reason=ExecutionSkipReason.ACCOUNT_NOT_FOUND,
                 execution_summary="execution account not found",
             )
 

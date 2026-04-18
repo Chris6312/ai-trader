@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from app.risk import OpenPositionSnapshot, RiskApprovalInput
 from app.services import strategy_runtime_integration as sri
-from app.services.execution_engine import ExecutionOutcome, PaperExecutionRequest
+from app.services.execution_engine import ExecutionOutcome, ExecutionSkipReason, PaperExecutionRequest
 
 
 @dataclass
@@ -73,7 +73,7 @@ class DummyDuplicateExecutionEngine:
                 "db_order_id": None,
                 "broker_order_id": None,
                 "skipped": True,
-                "skip_reason": "signal_already_executed",
+                "skip_reason": ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED.value,
                 "execution_summary": "duplicate execution attempt skipped",
             },
         )()
@@ -164,7 +164,7 @@ def test_evaluate_from_candles_with_risk_and_execution_surfaces_duplicate_outcom
 
     assert result[0].executed is False
     assert result[0].execution_skipped is True
-    assert result[0].execution_skip_reason == "signal_already_executed"
+    assert result[0].execution_skip_reason == ExecutionSkipReason.SIGNAL_ALREADY_EXECUTED.value
     assert result[0].execution_outcome == "duplicate"
     assert result[0].execution_summary == "duplicate execution attempt skipped"
     assert result[0].execution_broker_order_id is None
