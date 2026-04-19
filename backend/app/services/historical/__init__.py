@@ -8,6 +8,22 @@ from app.services.historical.historical_feature_store import HistoricalFeatureSt
 from app.services.historical.historical_training_dataset import HistoricalTrainingDatasetService
 from app.services.historical.historical_baseline_model import HistoricalBaselineModelService
 from app.services.historical.historical_walkforward_validation import HistoricalWalkForwardValidationService
+from app.services.historical.historical_feature_importance_review import HistoricalFeatureImportanceReviewService
+from app.services.historical.historical_ml_scoring import HistoricalMLScoringService
+from app.services.historical.historical_ml_scoring_schemas import (
+    HistoricalMLScoringConfig,
+    HistoricalMLScoringSummary,
+    MLScoreExplanationRecord,
+    MLScoredCandidateRecord,
+    MLScoringCandidateInput,
+)
+from app.services.historical.historical_feature_importance_review_schemas import (
+    FeatureDriftRecord,
+    FeatureImportanceFoldReview,
+    FeatureImportanceRecord,
+    HistoricalFeatureImportanceReviewConfig,
+    HistoricalFeatureImportanceReviewSummary,
+)
 from app.services.historical.historical_walkforward_validation_schemas import (
     HistoricalWalkForwardValidationConfig,
     HistoricalWalkForwardValidationSummary,
@@ -83,6 +99,18 @@ __all__ = [
     "HistoricalWalkForwardValidationConfig",
     "HistoricalWalkForwardValidationSummary",
     "HistoricalWalkForwardValidationService",
+    "HistoricalFeatureImportanceReviewConfig",
+    "HistoricalFeatureImportanceReviewService",
+    "HistoricalMLScoringConfig",
+    "HistoricalMLScoringService",
+    "HistoricalMLScoringSummary",
+    "MLScoreExplanationRecord",
+    "MLScoredCandidateRecord",
+    "MLScoringCandidateInput",
+    "HistoricalFeatureImportanceReviewSummary",
+    "FeatureImportanceFoldReview",
+    "FeatureImportanceRecord",
+    "FeatureDriftRecord",
     "WalkForwardAggregateMetrics",
     "WalkForwardFoldPlan",
     "WalkForwardFoldResult",

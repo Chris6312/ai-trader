@@ -236,7 +236,7 @@ Deliverables:
 
 ---
 
-### 12I — Feature Importance + Drift Review
+### [x] 12I — Feature Importance + Drift Review
 
 Generate explainability artifacts.
 
@@ -260,7 +260,7 @@ Deliverables:
 
 ---
 
-### 12J — ML Scoring Integration
+### [x] 12J — ML Scoring Integration
 
 Integrate model scoring into candidate ranking flow.
 
