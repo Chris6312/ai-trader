@@ -276,14 +276,70 @@ def test_ml_transparency_row_list_and_explanation(monkeypatch) -> None:
             "/api/ai/ml/explanations/historical",
             params={"bundle_version": BUNDLE_VERSION, "row_key": rows_payload["rows"][0]["row_key"]},
         )
+        feature_health_response = client.get(
+            "/api/ai/ml/inspection/feature-health",
+            params={"bundle_version": BUNDLE_VERSION, "requested_mode": "shadow"},
+        )
 
     assert rows_response.status_code == 200
     assert rows_payload["returned"] == 4
     assert rows_payload["rows"][0]["symbol"] in {"AAPL", "AMD", "MSFT", "NVDA"}
 
+    assert feature_health_response.status_code == 200
+    feature_health_payload = feature_health_response.json()
+    assert feature_health_payload["bundle_version"] == BUNDLE_VERSION
+    assert feature_health_payload["runtime_control"]["requested_mode"] == "shadow"
+
     assert explanation_response.status_code == 200
     explanation_payload = explanation_response.json()
     assert explanation_payload["bundle_version"] == BUNDLE_VERSION
     assert explanation_payload["row"]["row_key"] == rows_payload["rows"][0]["row_key"]
-    assert explanation_payload["probability"] is not None
+    assert explanation_payload["row"]["symbol"] in {"AAPL", "AMD", "MSFT", "NVDA"}
+    assert explanation_payload["positive_contributors"]
+    assert explanation_payload["negative_contributors"] == []
     assert explanation_payload["feature_snapshot"]["feature_alpha"] is not None
+    assert explanation_payload["probability"] is not None
+    assert explanation_payload["confidence"] is not None
+
+def test_ml_strategy_learning_panel_and_symbol_lookup(monkeypatch) -> None:
+    with _test_client(monkeypatch) as client:
+        panel_response = client.get(
+            "/api/ai/ml/inspection/strategy",
+            params={"bundle_version": BUNDLE_VERSION, "requested_mode": "shadow"},
+        )
+        feature_health_response = client.get(
+            "/api/ai/ml/inspection/feature-health",
+            params={"bundle_version": BUNDLE_VERSION, "requested_mode": "shadow"},
+        )
+        explanation_response = client.get(
+            "/api/ai/ml/explanations/by-symbol-date",
+            params={
+                "bundle_version": BUNDLE_VERSION,
+                "symbol": "NVDA",
+                "decision_date": "2026-04-03",
+            },
+        )
+
+    assert panel_response.status_code == 200
+    panel_payload = panel_response.json()
+    assert panel_payload["strategy_name"] == "momentum"
+    assert panel_payload["runtime_control"]["requested_mode"] == "shadow"
+    assert panel_payload["summary"]["rows_total"] == 4
+    assert panel_payload["summary"]["symbols_total"] == 4
+    assert panel_payload["summary"]["runtime_context"] == panel_payload["runtime_control"]["effective_mode"]
+    assert panel_payload["global_feature_importance"]
+    assert panel_payload["highlighted_rows"]
+
+    assert feature_health_response.status_code == 200
+    feature_health_payload = feature_health_response.json()
+    assert feature_health_payload["strategy_name"] == "momentum"
+    assert feature_health_payload["runtime_control"]["effective_mode"] == panel_payload["runtime_control"]["effective_mode"]
+    assert feature_health_payload["validation_summary"]["validation_version"] == "12h_v1_validation"
+    assert feature_health_payload["drift_summary"]["flagged_feature_count"] == 1
+    assert feature_health_payload["global_feature_leaders"][0]["feature_key"] == "feature_beta"
+
+    assert explanation_response.status_code == 200
+    explanation_payload = explanation_response.json()
+    assert explanation_payload["row"]["symbol"] == "NVDA"
+    assert explanation_payload["row"]["decision_date"] == "2026-04-03"
+    assert explanation_payload["probability"] is not None
