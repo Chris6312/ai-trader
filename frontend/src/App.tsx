@@ -6,6 +6,7 @@ import { AccountsPage } from './pages/AccountsPage'
 import { ControlsPage } from './pages/ControlsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { LogsPage } from './pages/LogsPage'
+import { MlTransparencyPage } from './pages/MlTransparencyPage'
 import { OrdersPage } from './pages/OrdersPage'
 import { PositionsPage } from './pages/PositionsPage'
 
@@ -22,6 +23,8 @@ function renderRoute(route: AppRouteKey) {
       return <OrdersPage />
     case 'positions':
       return <PositionsPage />
+    case 'ml':
+      return <MlTransparencyPage />
     case 'controls':
       return <ControlsPage />
     case 'logs':

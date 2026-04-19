@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -9,6 +11,13 @@ from app.models import AssetClass
 from app.models.ai_research import RegimeSnapshot, SentimentSnapshot, TechnicalSnapshot, UniverseSnapshot
 from app.schemas.ai_research_api import (
     AISnapshotInspectionOut,
+    MLTransparencyExplanationOut,
+    MLTransparencyFeatureOut,
+    MLTransparencyModelOut,
+    MLTransparencyModelRegistryOut,
+    MLTransparencyOverviewOut,
+    MLTransparencyRowListOut,
+    MLTransparencyRowReferenceOut,
     RegimeSnapshotOut,
     SentimentSnapshotOut,
     SnapshotFilterSummaryOut,
@@ -16,6 +25,7 @@ from app.schemas.ai_research_api import (
     UniverseSnapshotListOut,
     UniverseSnapshotOut,
 )
+from app.services.historical.historical_ml_transparency import HistoricalMLTransparencyService
 
 router = APIRouter(prefix="/api/ai", tags=["ai-research"])
 
@@ -155,6 +165,86 @@ def get_latest_universe_rows(
     )
 
 
+@router.get("/ml/models", response_model=MLTransparencyModelRegistryOut)
+def get_ml_model_registry(
+    db: Session = Depends(get_db),
+) -> MLTransparencyModelRegistryOut:
+    service = HistoricalMLTransparencyService(db)
+    rows = service.list_models()
+    return MLTransparencyModelRegistryOut(
+        rows=[_serialize_ml_model(row) for row in rows],
+        returned=len(rows),
+    )
+
+
+@router.get("/ml/overview", response_model=MLTransparencyOverviewOut)
+def get_ml_transparency_overview(
+    bundle_version: str = Query(..., min_length=1),
+    row_limit: int = Query(default=8, ge=1, le=25),
+    db: Session = Depends(get_db),
+) -> MLTransparencyOverviewOut:
+    service = HistoricalMLTransparencyService(db)
+    try:
+        overview = service.get_overview(bundle_version=bundle_version, row_limit=row_limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return MLTransparencyOverviewOut(
+        model=_serialize_ml_model(overview.model),
+        lineage=overview.lineage,
+        training_metrics=overview.training_metrics,
+        global_feature_importance=[_serialize_ml_feature(item) for item in overview.global_feature_importance],
+        regime_feature_importance=[_serialize_ml_feature(item) for item in overview.regime_feature_importance],
+        drift_signals=[_serialize_ml_feature(item) for item in overview.drift_signals],
+        health=overview.health,
+        sample_rows=[_serialize_ml_row_reference(item) for item in overview.sample_rows],
+    )
+
+
+@router.get("/ml/rows", response_model=MLTransparencyRowListOut)
+def get_ml_historical_rows(
+    bundle_version: str = Query(..., min_length=1),
+    limit: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> MLTransparencyRowListOut:
+    service = HistoricalMLTransparencyService(db)
+    try:
+        rows = service.list_historical_rows(bundle_version=bundle_version, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return MLTransparencyRowListOut(
+        rows=[_serialize_ml_row_reference(item) for item in rows],
+        returned=len(rows),
+    )
+
+
+@router.get("/ml/explanations/historical", response_model=MLTransparencyExplanationOut)
+def get_ml_historical_explanation(
+    bundle_version: str = Query(..., min_length=1),
+    row_key: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+) -> MLTransparencyExplanationOut:
+    service = HistoricalMLTransparencyService(db)
+    try:
+        explanation = service.explain_historical_row(bundle_version=bundle_version, row_key=row_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return MLTransparencyExplanationOut(
+        bundle_version=explanation.bundle_version,
+        model_version=explanation.model_version,
+        dataset_version=explanation.dataset_version,
+        strategy_name=explanation.strategy_name,
+        row=_serialize_ml_row_reference(explanation.row),
+        score=explanation.score,
+        probability=explanation.probability,
+        confidence=explanation.confidence,
+        baseline_expectation=explanation.baseline_expectation,
+        positive_contributors=[_serialize_ml_feature(item) for item in explanation.positive_contributors],
+        negative_contributors=[_serialize_ml_feature(item) for item in explanation.negative_contributors],
+        feature_snapshot=explanation.feature_snapshot,
+        skipped_reason=explanation.skipped_reason,
+    )
+
+
 def _find_single_snapshot(
     db: Session,
     model: type[SentimentSnapshot] | type[RegimeSnapshot],
@@ -258,3 +348,15 @@ def _serialize_universe(row: UniverseSnapshot) -> UniverseSnapshotOut:
         inputs=row.inputs_json,
         created_at=row.created_at,
     )
+
+
+def _serialize_ml_model(row) -> MLTransparencyModelOut:
+    return MLTransparencyModelOut(**asdict(row))
+
+
+def _serialize_ml_feature(row) -> MLTransparencyFeatureOut:
+    return MLTransparencyFeatureOut(**asdict(row))
+
+
+def _serialize_ml_row_reference(row) -> MLTransparencyRowReferenceOut:
+    return MLTransparencyRowReferenceOut(**asdict(row))

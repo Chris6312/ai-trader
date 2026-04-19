@@ -261,6 +261,69 @@ class HistoricalReplayLabel(Base):
     )
 
 
+class TrainingDatasetVersion(Base):
+    __tablename__ = "training_dataset_versions"
+
+    dataset_version: Mapped[str] = mapped_column(String(40), primary_key=True)
+    dataset_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    dataset_definition_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    asset_class: Mapped[AssetClass] = mapped_column(
+        SqlEnum(AssetClass, name="asset_class_enum"),
+        nullable=False,
+        index=True,
+    )
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    source_label: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    strategy_name: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    start_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    end_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    feature_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    replay_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    label_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    row_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    feature_keys_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    build_metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class TrainingDatasetRow(Base):
+    __tablename__ = "training_dataset_rows"
+    __table_args__ = (
+        UniqueConstraint("dataset_version", "row_key", name="uq_training_dataset_row"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    row_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_date: Mapped[date] = mapped_column(Date(), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    asset_class: Mapped[AssetClass] = mapped_column(
+        SqlEnum(AssetClass, name="asset_class_enum"),
+        nullable=False,
+        index=True,
+    )
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    source_label: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    entry_candle_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    feature_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    replay_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    label_version: Mapped[str] = mapped_column(String(30), nullable=False)
+    feature_values_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    label_values_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class TechnicalSnapshot(Base):
     __tablename__ = "ai_technical_snapshots"
     __table_args__ = (

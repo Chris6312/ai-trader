@@ -2,6 +2,7 @@ import {
   Activity,
   BadgeDollarSign,
   BookOpenText,
+  BrainCircuit,
   CandlestickChart,
   LayoutDashboard,
   ListChecks,
@@ -15,6 +16,7 @@ export type AppRouteKey =
   | 'positions'
   | 'controls'
   | 'logs'
+  | 'ml'
 
 export interface AppRouteDefinition {
   key: AppRouteKey
@@ -52,6 +54,13 @@ export const APP_ROUTES: AppRouteDefinition[] = [
     shortLabel: 'Pos',
     description: 'Open paper positions, exposure, and detail drawers to come.',
     icon: Activity,
+  },
+  {
+    key: 'ml',
+    label: 'ML Transparency',
+    shortLabel: 'ML',
+    description: 'Model registry, feature importance, drift review, and row explanations.',
+    icon: BrainCircuit,
   },
   {
     key: 'controls',

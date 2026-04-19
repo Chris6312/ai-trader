@@ -300,7 +300,7 @@ Deliverables:
 
 ---
 
-### 12L — Model Persistence and Reproducibility
+### [x] 12L — Model Persistence and Reproducibility
 
 Persist model artifacts and metadata.
 
@@ -320,7 +320,7 @@ Deliverables:
 
 ---
 
-### 12M — ML Transparency UI + API Contract
+### 12M — ML Transparency UI + API Contract [x]
 
 Expose what the model learned.
 

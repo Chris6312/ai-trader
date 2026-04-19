@@ -100,3 +100,80 @@ class UniverseSnapshotListOut(BaseModel):
     timeframe: str | None = None
     source_label: str | None = None
     asset_class: AssetClass | None = None
+
+
+class MLTransparencyModelOut(BaseModel):
+    bundle_version: str
+    bundle_name: str
+    model_version: str
+    model_family: str
+    dataset_version: str
+    strategy_name: str
+    label_key: str
+    feature_count: int
+    manifest_path: str
+    created_at: str | None = None
+    validation_version: str | None = None
+    drift_report_version: str | None = None
+    scoring_version: str | None = None
+    verified_artifact: bool
+
+
+class MLTransparencyFeatureOut(BaseModel):
+    feature_key: str
+    tree_importance: float | None = None
+    permutation_importance: float | None = None
+    standardized_mean_shift: float | None = None
+    population_stability_index: float | None = None
+    drift_flagged: bool = False
+    direction: str | None = None
+    contribution: float | None = None
+    feature_value: float | None = None
+    baseline_value: float | None = None
+
+
+class MLTransparencyRowReferenceOut(BaseModel):
+    row_key: str
+    symbol: str
+    asset_class: str
+    timeframe: str
+    decision_date: str
+    entry_candle_time: str
+    strategy_name: str
+
+
+class MLTransparencyModelRegistryOut(BaseModel):
+    rows: list[MLTransparencyModelOut]
+    returned: int
+
+
+class MLTransparencyOverviewOut(BaseModel):
+    model: MLTransparencyModelOut
+    lineage: dict[str, object]
+    training_metrics: dict[str, float]
+    global_feature_importance: list[MLTransparencyFeatureOut]
+    regime_feature_importance: list[MLTransparencyFeatureOut]
+    drift_signals: list[MLTransparencyFeatureOut]
+    health: dict[str, object]
+    sample_rows: list[MLTransparencyRowReferenceOut]
+
+
+class MLTransparencyRowListOut(BaseModel):
+    rows: list[MLTransparencyRowReferenceOut]
+    returned: int
+
+
+class MLTransparencyExplanationOut(BaseModel):
+    bundle_version: str
+    model_version: str
+    dataset_version: str
+    strategy_name: str
+    row: MLTransparencyRowReferenceOut
+    score: float | None = None
+    probability: float | None = None
+    confidence: float | None = None
+    baseline_expectation: dict[str, float]
+    positive_contributors: list[MLTransparencyFeatureOut]
+    negative_contributors: list[MLTransparencyFeatureOut]
+    feature_snapshot: dict[str, object]
+    skipped_reason: str | None = None
