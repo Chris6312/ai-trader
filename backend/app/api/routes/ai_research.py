@@ -11,6 +11,11 @@ from app.models import AssetClass
 from app.models.ai_research import RegimeSnapshot, SentimentSnapshot, TechnicalSnapshot, UniverseSnapshot
 from app.schemas.ai_research_api import (
     AISnapshotInspectionOut,
+    MLDeploymentActionOut,
+    MLDeploymentActionRequest,
+    MLDeploymentAuditEventOut,
+    MLDeploymentFreezeRequest,
+    MLDeploymentStateOut,
     MLRuntimeControlOut,
     MLTransparencyExplanationOut,
     MLTransparencyFeatureHealthPanelOut,
@@ -28,6 +33,7 @@ from app.schemas.ai_research_api import (
     UniverseSnapshotListOut,
     UniverseSnapshotOut,
 )
+from app.services.historical.historical_ml_deployment_safety import HistoricalMLDeploymentSafetyService
 from app.services.historical.historical_ml_runtime_controls import HistoricalMLRuntimeControlService
 from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
 from app.services.historical.historical_ml_transparency import HistoricalMLTransparencyService
@@ -168,6 +174,82 @@ def get_latest_universe_rows(
         source_label=source_label or latest_row.source_label,
         asset_class=asset_class or latest_row.asset_class,
     )
+
+
+@router.get("/ml/deployment/state", response_model=MLDeploymentStateOut)
+def get_ml_deployment_state(
+    db: Session = Depends(get_db),
+) -> MLDeploymentStateOut:
+    service = HistoricalMLDeploymentSafetyService(db)
+    return _serialize_ml_deployment_state(service.get_state())
+
+
+@router.post("/ml/deployment/approve/{bundle_version}", response_model=MLDeploymentActionOut)
+def approve_ml_candidate(
+    bundle_version: str,
+    body: MLDeploymentActionRequest,
+    db: Session = Depends(get_db),
+) -> MLDeploymentActionOut:
+    service = HistoricalMLDeploymentSafetyService(db)
+    try:
+        summary = service.approve_candidate(bundle_version=bundle_version, actor=body.actor, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _serialize_ml_deployment_action(summary)
+
+
+@router.post("/ml/deployment/promote/{bundle_version}", response_model=MLDeploymentActionOut)
+def promote_ml_bundle(
+    bundle_version: str,
+    body: MLDeploymentActionRequest,
+    db: Session = Depends(get_db),
+) -> MLDeploymentActionOut:
+    service = HistoricalMLDeploymentSafetyService(db)
+    try:
+        summary = service.promote_bundle(bundle_version=bundle_version, actor=body.actor, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _serialize_ml_deployment_action(summary)
+
+
+@router.post("/ml/deployment/rollback", response_model=MLDeploymentActionOut)
+def rollback_ml_bundle(
+    body: MLDeploymentActionRequest,
+    db: Session = Depends(get_db),
+) -> MLDeploymentActionOut:
+    service = HistoricalMLDeploymentSafetyService(db)
+    try:
+        summary = service.rollback_bundle(actor=body.actor, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _serialize_ml_deployment_action(summary)
+
+
+@router.post("/ml/deployment/freeze/{bundle_version}", response_model=MLDeploymentActionOut)
+def freeze_ml_bundle(
+    bundle_version: str,
+    body: MLDeploymentFreezeRequest,
+    db: Session = Depends(get_db),
+) -> MLDeploymentActionOut:
+    service = HistoricalMLDeploymentSafetyService(db)
+    try:
+        summary = service.freeze_bundle(bundle_version=bundle_version, actor=body.actor, reason=body.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _serialize_ml_deployment_action(summary)
+
+
+@router.post("/ml/deployment/unfreeze", response_model=MLDeploymentActionOut)
+def unfreeze_ml_bundle(
+    body: MLDeploymentActionRequest,
+    db: Session = Depends(get_db),
+) -> MLDeploymentActionOut:
+    service = HistoricalMLDeploymentSafetyService(db)
+    try:
+        summary = service.unfreeze_bundle(actor=body.actor, notes=body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _serialize_ml_deployment_action(summary)
 
 
 @router.get("/ml/runtime", response_model=MLRuntimeControlOut)
@@ -504,6 +586,27 @@ def _serialize_universe(row: UniverseSnapshot) -> UniverseSnapshotOut:
         component_scores=row.component_scores_json,
         inputs=row.inputs_json,
         created_at=row.created_at,
+    )
+
+
+def _serialize_ml_deployment_event(row) -> MLDeploymentAuditEventOut:
+    return MLDeploymentAuditEventOut(**asdict(row))
+
+
+def _serialize_ml_deployment_state(row) -> MLDeploymentStateOut:
+    return MLDeploymentStateOut(
+        active_bundle_version=row.active_bundle_version,
+        approved_candidate_versions=list(row.approved_candidate_versions),
+        frozen_bundle_version=row.frozen_bundle_version,
+        freeze_reason=row.freeze_reason,
+        change_history=[_serialize_ml_deployment_event(item) for item in row.change_history],
+    )
+
+
+def _serialize_ml_deployment_action(row) -> MLDeploymentActionOut:
+    return MLDeploymentActionOut(
+        state=_serialize_ml_deployment_state(row.state),
+        event=_serialize_ml_deployment_event(row.event),
     )
 
 

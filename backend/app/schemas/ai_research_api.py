@@ -119,6 +119,39 @@ class MLTransparencyModelOut(BaseModel):
     verified_artifact: bool
 
 
+class MLDeploymentAuditEventOut(BaseModel):
+    event_id: str
+    action: str
+    bundle_version: str
+    actor: str
+    notes: str | None = None
+    occurred_at: datetime
+    metadata: dict[str, object]
+
+
+class MLDeploymentStateOut(BaseModel):
+    active_bundle_version: str | None = None
+    approved_candidate_versions: list[str]
+    frozen_bundle_version: str | None = None
+    freeze_reason: str | None = None
+    change_history: list[MLDeploymentAuditEventOut]
+
+
+class MLDeploymentActionRequest(BaseModel):
+    actor: str
+    notes: str | None = None
+
+
+class MLDeploymentFreezeRequest(BaseModel):
+    actor: str
+    reason: str | None = None
+
+
+class MLDeploymentActionOut(BaseModel):
+    state: MLDeploymentStateOut
+    event: MLDeploymentAuditEventOut
+
+
 class MLRuntimeControlOut(BaseModel):
     bundle_version: str
     strategy_name: str
