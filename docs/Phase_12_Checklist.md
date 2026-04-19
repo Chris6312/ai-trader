@@ -283,7 +283,7 @@ Deliverables:
 
 ---
 
-### 12K — Retraining Schedule
+### [x] 12K — Retraining Schedule
 
 Define retraining cadence.
 

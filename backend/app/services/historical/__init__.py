@@ -10,6 +10,13 @@ from app.services.historical.historical_baseline_model import HistoricalBaseline
 from app.services.historical.historical_walkforward_validation import HistoricalWalkForwardValidationService
 from app.services.historical.historical_feature_importance_review import HistoricalFeatureImportanceReviewService
 from app.services.historical.historical_ml_scoring import HistoricalMLScoringService
+from app.services.historical.historical_retraining_schedule import HistoricalRetrainingScheduleService
+from app.services.historical.historical_retraining_schedule_schemas import (
+    HistoricalRetrainingContext,
+    HistoricalRetrainingScheduleConfig,
+    HistoricalRetrainingScheduleSummary,
+    RetrainingPipelineStep,
+)
 from app.services.historical.historical_ml_scoring_schemas import (
     HistoricalMLScoringConfig,
     HistoricalMLScoringSummary,
@@ -104,6 +111,11 @@ __all__ = [
     "HistoricalMLScoringConfig",
     "HistoricalMLScoringService",
     "HistoricalMLScoringSummary",
+    "HistoricalRetrainingContext",
+    "HistoricalRetrainingScheduleConfig",
+    "HistoricalRetrainingScheduleService",
+    "HistoricalRetrainingScheduleSummary",
+    "RetrainingPipelineStep",
     "MLScoreExplanationRecord",
     "MLScoredCandidateRecord",
     "MLScoringCandidateInput",
