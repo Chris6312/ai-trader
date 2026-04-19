@@ -6,6 +6,8 @@ from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
 
+from app.services.historical.historical_ml_bundle_inspector import HistoricalMLBundleInspector
+
 from sqlalchemy.orm import Session
 
 from app.services.historical.historical_ml_runtime_controls_schemas import (
@@ -28,6 +30,7 @@ class HistoricalMLRuntimeControlService:
         )
         self._bundle_dir.mkdir(parents=True, exist_ok=True)
         self._config = config or HistoricalMLRuntimeControlConfig()
+        self._bundle_inspector = HistoricalMLBundleInspector()
 
     def evaluate_runtime_controls(
         self,
@@ -78,7 +81,7 @@ class HistoricalMLRuntimeControlService:
                 reason_codes=["bundle_not_found"],
             )
 
-        manifest = self._read_json(manifest_path)
+        manifest = self._bundle_inspector.load_manifest(manifest_path)
         metadata["bundle_name"] = str(manifest.get("bundle_name") or "")
         metadata["dataset_version"] = str((manifest.get("dataset") or {}).get("dataset_version") or "")
 
@@ -93,12 +96,16 @@ class HistoricalMLRuntimeControlService:
             if missing_feature_keys:
                 reason_codes.append("missing_required_features")
 
-        artifact_path = self._resolve_artifact_path(manifest=manifest, manifest_path=manifest_path)
-        verified_artifact = artifact_path is not None and artifact_path.exists()
+        artifact_status = self._bundle_inspector.resolve_model_artifact_status(manifest=manifest, manifest_path=manifest_path)
+        verified_artifact = artifact_status.verified_artifact
+        if artifact_status.source is not None:
+            metadata["artifact_source"] = artifact_status.source
+        if artifact_status.artifact_path is not None:
+            metadata["artifact_path"] = str(artifact_status.artifact_path)
         if self._config.require_verified_bundle and not verified_artifact:
             reason_codes.append("unverified_bundle")
 
-        validation_reference_present = self._has_reference(manifest=manifest, reference_type="walkforward_validation")
+        validation_reference_present = self._bundle_inspector.artifact_reference_present(manifest=manifest, reference_type="walkforward_validation")
         if self._config.require_validation_reference and not validation_reference_present:
             reason_codes.append("validation_reference_missing")
 
@@ -156,30 +163,6 @@ class HistoricalMLRuntimeControlService:
             reason_codes=["shadow_mode"] if effective_mode == "shadow" else [],
             metadata=metadata,
         )
-
-    def _resolve_artifact_path(self, *, manifest: dict[str, Any], manifest_path: Path) -> Path | None:
-        training_summary = manifest.get("training_summary") or {}
-        training_artifact_path = training_summary.get("artifact_path")
-        if isinstance(training_artifact_path, str) and training_artifact_path:
-            return Path(training_artifact_path)
-
-        for reference in manifest.get("references") or []:
-            if str(reference.get("reference_type") or "") != "model_training":
-                continue
-            artifact_path = reference.get("artifact_path")
-            if isinstance(artifact_path, str) and artifact_path:
-                return Path(artifact_path)
-
-        bundle_local_artifact = manifest_path.parent / "model_artifact.joblib"
-        if bundle_local_artifact.exists():
-            return bundle_local_artifact
-        return None
-
-    def _has_reference(self, *, manifest: dict[str, Any], reference_type: str) -> bool:
-        for reference in manifest.get("references") or []:
-            if str(reference.get("reference_type") or "") == reference_type:
-                return True
-        return False
 
     def _resolve_validation_metric(self, *, manifest: dict[str, Any]) -> float | None:
         validation_summary = manifest.get("validation_summary") or {}

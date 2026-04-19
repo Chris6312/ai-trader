@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.ai_research import TrainingDatasetRow
+from app.services.historical.historical_ml_bundle_inspector import HistoricalMLBundleInspector
 from app.services.historical.historical_ml_scoring_schemas import MLScoringCandidateInput
 
 if TYPE_CHECKING:
@@ -100,11 +101,12 @@ class HistoricalMLTransparencyService:
             bundle_dir or Path(gettempdir()) / "ai_trader_ml_artifacts" / "_persisted_model_bundles"
         )
         self._bundle_dir.mkdir(parents=True, exist_ok=True)
+        self._bundle_inspector = HistoricalMLBundleInspector()
 
     def list_models(self) -> list[TransparencyModelRecord]:
         records: list[TransparencyModelRecord] = []
         for manifest_path in sorted(self._bundle_dir.glob("*/manifest.json")):
-            manifest = self._read_json(manifest_path)
+            manifest = self._bundle_inspector.load_manifest(manifest_path)
             records.append(self._build_model_record(manifest_path=manifest_path, manifest=manifest))
         records.sort(key=lambda item: (item.bundle_version, item.model_version), reverse=True)
         return records
@@ -205,7 +207,10 @@ class HistoricalMLTransparencyService:
         if row is None:
             raise ValueError(f"unknown row_key for bundle {bundle_version}: {row_key}")
 
-        artifact_path = self._resolve_model_artifact_path(manifest)
+        artifact_status = self._bundle_inspector.resolve_model_artifact_status(manifest=manifest, manifest_path=self._bundle_dir / bundle_version / "manifest.json", allow_missing=False)
+        artifact_path = artifact_status.artifact_path
+        if artifact_path is None or not artifact_status.verified_artifact:
+            raise ValueError(f"persisted model artifact missing for bundle: {bundle_version}")
 
         # Lazy import to avoid pulling optional ML dependencies like joblib/sklearn
         # into backend startup paths that only need the API layer to boot.
@@ -276,7 +281,7 @@ class HistoricalMLTransparencyService:
         manifest_path = self._bundle_dir / bundle_version / "manifest.json"
         if not manifest_path.exists():
             raise ValueError(f"unknown bundle_version: {bundle_version}")
-        return manifest_path, self._read_json(manifest_path)
+        return manifest_path, self._bundle_inspector.load_manifest(manifest_path)
 
     def _build_model_record(self, *, manifest_path: Path, manifest: dict[str, object]) -> TransparencyModelRecord:
         training_summary = cast(dict[str, object], manifest.get("training_summary", {}))
@@ -284,7 +289,7 @@ class HistoricalMLTransparencyService:
         validation_ref = self._find_reference(references, "walkforward_validation")
         drift_ref = self._find_reference(references, "feature_drift_review")
         scoring_ref = self._find_reference(references, "scoring_profile")
-        model_artifact_path = self._resolve_model_artifact_path(manifest, allow_missing=True)
+        artifact_status = self._bundle_inspector.resolve_model_artifact_status(manifest=manifest, manifest_path=manifest_path, allow_missing=True)
         return TransparencyModelRecord(
             bundle_version=str(manifest.get("bundle_version", manifest_path.parent.name)),
             bundle_name=str(manifest.get("bundle_name", "baseline_model_bundle")),
@@ -299,25 +304,8 @@ class HistoricalMLTransparencyService:
             validation_version=validation_ref,
             drift_report_version=drift_ref,
             scoring_version=scoring_ref,
-            verified_artifact=model_artifact_path.exists() if model_artifact_path is not None else False,
+            verified_artifact=artifact_status.verified_artifact,
         )
-
-    def _resolve_model_artifact_path(self, manifest: dict[str, object], allow_missing: bool = False) -> Path | None:
-        references = cast(list[dict[str, object]], manifest.get("references", []))
-        for reference in references:
-            if reference.get("reference_type") == "model_training":
-                artifact_path = reference.get("artifact_path")
-                if artifact_path is None:
-                    break
-                path = Path(str(artifact_path))
-                if allow_missing:
-                    return path
-                if not path.exists():
-                    raise ValueError(f"persisted model artifact missing: {path}")
-                return path
-        if allow_missing:
-            return None
-        raise ValueError("model_training reference with artifact_path is required")
 
     def _load_optional_json_artifact(self, manifest: dict[str, object], reference_type: str) -> dict[str, object]:
         references = cast(list[dict[str, object]], manifest.get("references", []))

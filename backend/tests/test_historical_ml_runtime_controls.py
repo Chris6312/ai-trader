@@ -154,6 +154,26 @@ def test_runtime_controls_block_stale_unverified_and_validation_failures() -> No
     }
 
 
+
+
+def test_runtime_controls_prefer_model_training_reference_for_verification() -> None:
+    session = _build_session()
+    bundle_version = "12n_runtime_verification_unified"
+    manifest_path = _write_manifest(bundle_version=bundle_version)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stale_path = str(BUNDLE_ROOT / bundle_version / "missing_from_training_summary.joblib")
+    manifest["training_summary"]["artifact_path"] = stale_path
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    summary = HistoricalMLRuntimeControlService(
+        session,
+        config=HistoricalMLRuntimeControlConfig(requested_mode="active_rank_only"),
+    ).evaluate_runtime_controls(bundle_version=bundle_version, strategy_name="momentum")
+
+    assert summary.verified_artifact is True
+    assert summary.effective_mode == "active_rank_only"
+    assert summary.metadata["artifact_source"] == "model_training_reference"
+
 def test_runtime_controls_block_strategy_and_feature_mismatches() -> None:
     session = _build_session()
     bundle_version = "12n_runtime_feature_checks"

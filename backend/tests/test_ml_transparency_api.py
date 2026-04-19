@@ -241,6 +241,33 @@ def test_ml_transparency_registry_and_overview(monkeypatch) -> None:
     assert overview_payload["sample_rows"]
 
 
+
+
+def test_ml_transparency_registry_uses_shared_artifact_verification(monkeypatch) -> None:
+    with _test_client(monkeypatch) as client:
+        manifest_path = BUNDLE_ROOT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["training_summary"]["artifact_path"] = str(BUNDLE_ROOT / "missing_from_training_summary.joblib")
+        manifest_path.write_text(json.dumps(manifest, default=str), encoding="utf-8")
+
+        registry_response = client.get("/api/ai/ml/models")
+        runtime_response = client.get(
+            "/api/ai/ml/runtime",
+            params={
+                "bundle_version": BUNDLE_VERSION,
+                "strategy_name": "momentum",
+                "requested_mode": "active_rank_only",
+            },
+        )
+
+    assert registry_response.status_code == 200
+    assert runtime_response.status_code == 200
+    registry_row = next(row for row in registry_response.json()["rows"] if row["bundle_version"] == BUNDLE_VERSION)
+    runtime_payload = runtime_response.json()
+    assert registry_row["verified_artifact"] is True
+    assert runtime_payload["verified_artifact"] is True
+    assert runtime_payload["metadata"]["artifact_source"] == "model_training_reference"
+
 def test_ml_transparency_row_list_and_explanation(monkeypatch) -> None:
     with _test_client(monkeypatch) as client:
         rows_response = client.get("/api/ai/ml/rows", params={"bundle_version": BUNDLE_VERSION})

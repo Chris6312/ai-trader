@@ -81,8 +81,17 @@ export function MlTransparencyPage() {
   const [requestedRuntimeMode, setRequestedRuntimeMode] = useState<string>('active_rank_only')
 
   useEffect(() => {
-    if (!selectedBundleVersion && modelRows.length > 0) {
+    if (modelRows.length === 0) {
+      if (selectedBundleVersion) {
+        setSelectedBundleVersion('')
+      }
+      return
+    }
+
+    const hasSelectedBundle = modelRows.some((item) => item.bundle_version === selectedBundleVersion)
+    if (!selectedBundleVersion || !hasSelectedBundle) {
       setSelectedBundleVersion(modelRows[0].bundle_version)
+      setSelectedRowKey('')
     }
   }, [modelRows, selectedBundleVersion])
 
@@ -124,6 +133,23 @@ export function MlTransparencyPage() {
 
   const explanation = explanationQuery.data as MLTransparencyExplanation | undefined
   const runtime = runtimeQuery.data as MLRuntimeControlSummary | undefined
+  const artifactStatusValue = runtime?.bundle_version === selectedBundleVersion
+    ? runtime.verified_artifact
+      ? 'Verified'
+      : 'Missing'
+    : selectedModel?.verified_artifact
+      ? 'Verified'
+      : 'Missing'
+  const artifactStatusTone = runtime?.bundle_version === selectedBundleVersion
+    ? runtime.verified_artifact
+      ? 'good'
+      : 'warn'
+    : selectedModel?.verified_artifact
+      ? 'good'
+      : 'warn'
+  const artifactStatusDetail = runtime?.bundle_version === selectedBundleVersion
+    ? `Validation ref: ${selectedModel?.validation_version ?? 'not bundled yet'} · Source: ${String(runtime.metadata?.artifact_source ?? 'unknown')}`
+    : `Validation ref: ${selectedModel?.validation_version ?? 'not bundled yet'}`
 
   return (
     <div className="page-grid">
@@ -186,9 +212,9 @@ export function MlTransparencyPage() {
             />
             <SummaryCard
               label="Artifact status"
-              value={selectedModel?.verified_artifact ? 'Verified' : 'Missing'}
-              tone={selectedModel?.verified_artifact ? 'good' : 'warn'}
-              detail={`Validation ref: ${selectedModel?.validation_version ?? 'not bundled yet'}`}
+              value={artifactStatusValue}
+              tone={artifactStatusTone}
+              detail={artifactStatusDetail}
             />
           </div>
           <article className="list-card">
