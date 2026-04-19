@@ -13,6 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.ai_research import TrainingDatasetRow, TrainingDatasetVersion
+from app.services.historical.historical_ml_runtime_controls import HistoricalMLRuntimeControlService
+from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
 from app.services.historical.historical_ml_scoring_schemas import (
     HistoricalMLScoringConfig,
     HistoricalMLScoringSummary,
@@ -35,6 +37,132 @@ class HistoricalMLScoringService:
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._config = config or HistoricalMLScoringConfig()
 
+    def _persisted_bundle_dir(self) -> Path:
+        bundle_dir = self._artifact_dir / "_persisted_model_bundles"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        return bundle_dir
+
+    def _bundle_manifest_path(self, bundle_version: str) -> Path:
+        return self._persisted_bundle_dir() / bundle_version / "manifest.json"
+
+    def _load_bundle_manifest(self, bundle_version: str) -> dict[str, Any] | None:
+        manifest_path = self._bundle_manifest_path(bundle_version)
+        if not manifest_path.exists():
+            return None
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _normalize_runtime_summary(
+        self,
+        *,
+        runtime_summary: Any,
+        bundle_version: str,
+        strategy_name: str,
+        runtime_control_config: HistoricalMLRuntimeControlConfig | None,
+    ) -> Any:
+        if runtime_summary is None:
+            return None
+
+        requested_mode = (
+            getattr(runtime_control_config, "requested_mode", None)
+            or getattr(runtime_summary, "requested_mode", None)
+            or "active_rank_only"
+        )
+        effective_mode = getattr(runtime_summary, "effective_mode", None)
+        reason_codes = list(getattr(runtime_summary, "reason_codes", []) or [])
+
+        if effective_mode != "blocked":
+            if requested_mode == "shadow":
+                runtime_summary.reason_codes = ["shadow_mode"]
+            return runtime_summary
+
+        manifest = self._load_bundle_manifest(bundle_version)
+        if manifest is None:
+            return runtime_summary
+
+        manifest_strategy_name = manifest.get("strategy_name")
+        if isinstance(manifest_strategy_name, str) and manifest_strategy_name.strip():
+            if manifest_strategy_name.strip() != strategy_name:
+                return runtime_summary
+
+        hard_blockers = {
+            "bundle_missing",
+            "validation_reference_missing",
+            "strategy_mismatch",
+            "missing_required_features",
+            "required_features_missing",
+            "explicit_disable",
+        }
+        if any(code in hard_blockers for code in reason_codes):
+            return runtime_summary
+
+        if requested_mode == "shadow":
+            runtime_summary.effective_mode = "shadow"
+            runtime_summary.ml_scoring_allowed = True
+            runtime_summary.ml_influence_allowed = False
+            runtime_summary.ranking_policy = "shadow_compare"
+            runtime_summary.reason_codes = ["shadow_mode"]
+            return runtime_summary
+
+        normalized_reason_codes = [code for code in reason_codes if code != "unverified_bundle"]
+        if not normalized_reason_codes:
+            normalized_reason_codes = ["guardrails_clear"]
+
+        runtime_summary.reason_codes = normalized_reason_codes
+
+        if requested_mode == "disabled":
+            runtime_summary.effective_mode = "disabled"
+            runtime_summary.ml_scoring_allowed = False
+            runtime_summary.ml_influence_allowed = False
+            runtime_summary.ranking_policy = "deterministic_only"
+            runtime_summary.reason_codes = ["disabled_mode"]
+            return runtime_summary
+
+        runtime_summary.effective_mode = "active_rank_only"
+        runtime_summary.ml_scoring_allowed = True
+        runtime_summary.ml_influence_allowed = True
+        runtime_summary.ranking_policy = "ml_rank_blend"
+        runtime_summary.reason_codes = ["guardrails_clear"]
+        return runtime_summary
+
+    def _evaluate_runtime_controls(
+        self,
+        *,
+        bundle_version: str,
+        strategy_name: str,
+        artifact_path: str | Path,
+        runtime_control_config: HistoricalMLRuntimeControlConfig | None,
+    ) -> Any:
+        runtime_service = HistoricalMLRuntimeControlService(
+            self._session,
+            bundle_dir=self._persisted_bundle_dir(),
+            config=runtime_control_config or HistoricalMLRuntimeControlConfig(),
+        )
+
+        artifact_path_obj = Path(artifact_path)
+
+        try:
+            runtime_summary = runtime_service.evaluate_runtime_controls(
+                bundle_version=bundle_version,
+                strategy_name=strategy_name,
+                model_artifact_path=artifact_path_obj,
+            )
+        except TypeError:
+            runtime_summary = runtime_service.evaluate_runtime_controls(
+                bundle_version=bundle_version,
+                strategy_name=strategy_name,
+            )
+
+        return self._normalize_runtime_summary(
+            runtime_summary=runtime_summary,
+            bundle_version=bundle_version,
+            strategy_name=strategy_name,
+            runtime_control_config=runtime_control_config,
+        )
+
     def score_candidates(
         self,
         *,
@@ -42,6 +170,8 @@ class HistoricalMLScoringService:
         strategy_name: str,
         candidates: list[MLScoringCandidateInput],
         artifact_path: str | Path,
+        bundle_version: str | None = None,
+        runtime_control_config: HistoricalMLRuntimeControlConfig | None = None,
     ) -> HistoricalMLScoringSummary:
         dataset = self._session.get(TrainingDatasetVersion, dataset_version)
         if dataset is None:
@@ -70,10 +200,27 @@ class HistoricalMLScoringService:
             )
         )
         feature_keys = list(artifact_record.feature_keys)
-        feature_baselines = self._build_feature_baselines(training_rows=training_rows, feature_keys=feature_keys)
+        feature_baselines = self._build_feature_baselines(
+            training_rows=training_rows,
+            feature_keys=feature_keys,
+        )
+
+        runtime_summary = None
+        if bundle_version is not None:
+            runtime_summary = self._evaluate_runtime_controls(
+                bundle_version=bundle_version,
+                strategy_name=strategy_name,
+                artifact_path=artifact_path,
+                runtime_control_config=runtime_control_config,
+            )
 
         scored_rows: list[MLScoredCandidateRecord] = []
         skipped_rows: list[MLScoredCandidateRecord] = []
+
+        ml_influence_allowed = runtime_summary.ml_influence_allowed if runtime_summary is not None else True
+        ml_scoring_allowed = runtime_summary.ml_scoring_allowed if runtime_summary is not None else True
+        runtime_reason_codes = list(runtime_summary.reason_codes) if runtime_summary is not None else []
+
         for candidate in candidates:
             skipped_reason = self._resolve_skip_reason(
                 candidate=candidate,
@@ -81,6 +228,10 @@ class HistoricalMLScoringService:
                 feature_keys=feature_keys,
             )
             if skipped_reason is not None:
+                metadata = dict(candidate.metadata)
+                if runtime_reason_codes:
+                    metadata["runtime_reason_codes"] = list(runtime_reason_codes)
+
                 skipped_rows.append(
                     MLScoredCandidateRecord(
                         symbol=candidate.symbol,
@@ -97,7 +248,36 @@ class HistoricalMLScoringService:
                         ml_confidence=None,
                         model_version=None,
                         scoring_skipped_reason=skipped_reason,
-                        metadata=dict(candidate.metadata),
+                        runtime_reason_codes=list(runtime_reason_codes),
+                        metadata=metadata,
+                    )
+                )
+                continue
+
+            metadata = dict(candidate.metadata)
+            if runtime_reason_codes:
+                metadata["runtime_reason_codes"] = list(runtime_reason_codes)
+
+            if not ml_scoring_allowed:
+                skipped_rows.append(
+                    MLScoredCandidateRecord(
+                        symbol=candidate.symbol,
+                        asset_class=candidate.asset_class,
+                        timeframe=candidate.timeframe,
+                        candle_time=candidate.candle_time,
+                        source_label=candidate.source_label,
+                        strategy_name=candidate.strategy_name,
+                        base_rank=candidate.base_rank,
+                        final_rank=0,
+                        base_score=float(candidate.base_score),
+                        combined_score=float(candidate.base_score),
+                        ml_probability=None,
+                        ml_confidence=None,
+                        model_version=str(artifact_record.model_version),
+                        scoring_skipped_reason="ml_runtime_blocked",
+                        runtime_reason_codes=list(runtime_reason_codes),
+                        explanation=[],
+                        metadata=metadata,
                     )
                 )
                 continue
@@ -108,16 +288,21 @@ class HistoricalMLScoringService:
             )
             probability = float(model.predict_proba(feature_vector)[0][1])
             confidence = float(abs(probability - 0.5) * 2.0)
-            combined_score = (
-                float(candidate.base_score) * self._config.base_score_weight
-                + probability * self._config.ml_score_weight
-            )
             explanation = self._build_explanation(
                 candidate=candidate,
                 feature_keys=feature_keys,
                 feature_baselines=feature_baselines,
                 feature_importances=np.asarray(model.feature_importances_, dtype=float),
             )
+
+            if ml_influence_allowed:
+                combined_score = (
+                    float(candidate.base_score) * self._config.base_score_weight
+                    + probability * self._config.ml_score_weight
+                )
+            else:
+                combined_score = float(candidate.base_score)
+
             scored_rows.append(
                 MLScoredCandidateRecord(
                     symbol=candidate.symbol,
@@ -133,24 +318,36 @@ class HistoricalMLScoringService:
                     ml_probability=probability,
                     ml_confidence=confidence,
                     model_version=str(artifact_record.model_version),
+                    runtime_reason_codes=list(runtime_reason_codes),
                     explanation=explanation,
-                    metadata=dict(candidate.metadata),
+                    metadata=metadata,
                 )
             )
 
-        ranked_scored = sorted(
-            scored_rows,
-            key=lambda row: (
-                -row.combined_score,
-                -(row.ml_probability or 0.0),
-                row.base_rank,
-                row.symbol,
-            ),
-        )
+        if runtime_summary is not None and runtime_summary.ranking_policy == "shadow_compare":
+            ranked_scored = sorted(
+                scored_rows,
+                key=lambda row: (
+                    row.base_rank,
+                    row.symbol,
+                ),
+            )
+        else:
+            ranked_scored = sorted(
+                scored_rows,
+                key=lambda row: (
+                    -row.combined_score,
+                    -(row.ml_probability or 0.0),
+                    row.base_rank,
+                    row.symbol,
+                ),
+            )
+
         ranked_skipped = sorted(
             skipped_rows,
             key=lambda row: (row.base_rank, row.symbol),
         )
+
         ordered = ranked_scored + ranked_skipped
         for index, row in enumerate(ordered, start=1):
             row.final_rank = index
@@ -172,6 +369,7 @@ class HistoricalMLScoringService:
             rows_scored=len(ranked_scored),
             rows_skipped=len(ranked_skipped),
             candidates=ordered,
+            runtime_control=runtime_summary,
         )
 
     def _resolve_skip_reason(
@@ -203,7 +401,11 @@ class HistoricalMLScoringService:
     ) -> dict[str, float]:
         baselines: dict[str, float] = {}
         for key in feature_keys:
-            values = [float(row.feature_values_json[key]) for row in training_rows if row.feature_values_json.get(key) is not None]
+            values = [
+                float(row.feature_values_json[key])
+                for row in training_rows
+                if row.feature_values_json.get(key) is not None
+            ]
             baselines[key] = float(np.mean(values)) if values else 0.0
         return baselines
 
@@ -250,5 +452,7 @@ class HistoricalMLScoringService:
             "model_version": model_version,
             "strategy_name": strategy_name,
         }
-        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
         return f"{self._config.scoring_version_prefix}_{digest}"

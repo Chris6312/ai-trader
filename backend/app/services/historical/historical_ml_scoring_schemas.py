@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlSummary
+
 
 @dataclass(slots=True)
 class HistoricalMLScoringConfig:
@@ -53,6 +55,7 @@ class MLScoredCandidateRecord:
     model_version: str | None
     scoring_skipped_reason: str | None = None
     explanation: list[MLScoreExplanationRecord] = field(default_factory=list)
+    runtime_reason_codes: list[str] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
 
 
@@ -67,4 +70,6 @@ class HistoricalMLScoringSummary:
     rows_input: int
     rows_scored: int
     rows_skipped: int
+    bundle_version: str | None = None
+    runtime_control: HistoricalMLRuntimeControlSummary | None = None
     candidates: list[MLScoredCandidateRecord] = field(default_factory=list)

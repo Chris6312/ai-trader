@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.ai_research import TrainingDatasetRow
 from app.services.historical.historical_ml_bundle_inspector import HistoricalMLBundleInspector
+from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
 from app.services.historical.historical_ml_scoring_schemas import MLScoringCandidateInput
 
 if TYPE_CHECKING:
@@ -238,6 +239,8 @@ class HistoricalMLTransparencyService:
             strategy_name=strategy_name,
             candidates=[candidate],
             artifact_path=artifact_path,
+            bundle_version=bundle_version,
+            runtime_control_config=HistoricalMLRuntimeControlConfig(requested_mode="active_rank_only"),
         )
         candidate_result = scoring_summary.candidates[0]
 

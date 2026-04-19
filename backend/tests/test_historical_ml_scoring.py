@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from sqlalchemy import create_engine
@@ -10,6 +12,7 @@ from app.db.base import Base
 from app.models.ai_research import TrainingDatasetRow, TrainingDatasetVersion
 from app.models.trading import AssetClass
 from app.services.historical.historical_baseline_model import HistoricalBaselineModelService
+from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
 from app.services.historical.historical_ml_scoring import HistoricalMLScoringService
 from app.services.historical.historical_ml_scoring_schemas import HistoricalMLScoringConfig, MLScoringCandidateInput
 
@@ -69,6 +72,54 @@ def _seed_dataset(session: Session) -> None:
             )
         )
     session.commit()
+
+
+def _write_persisted_bundle(
+    *,
+    artifact_dir: str,
+    bundle_version: str,
+    training_artifact_path: str,
+    include_validation_reference: bool = True,
+    strategy_name: str = "momentum",
+) -> None:
+    bundle_root = Path(artifact_dir) / "_persisted_model_bundles" / bundle_version
+    bundle_root.mkdir(parents=True, exist_ok=True)
+    references = [
+        {
+            "reference_type": "model_training",
+            "reference_version": "12g_v1_model",
+            "artifact_path": training_artifact_path,
+        }
+    ]
+    if include_validation_reference:
+        references.append(
+            {
+                "reference_type": "walkforward_validation",
+                "reference_version": "12h_v1_validation",
+            }
+        )
+    manifest = {
+        "bundle_name": "baseline_model_bundle",
+        "bundle_version": bundle_version,
+        "dataset": {
+            "dataset_version": "12f_dataset_v1",
+            "feature_keys": ["feature_alpha", "feature_beta"],
+        },
+        "training_summary": {
+            "model_version": "12g_v1_model",
+            "model_family": "sklearn_gradient_boosting_classifier",
+            "strategy_name": strategy_name,
+            "trained_at": "2026-01-08T12:00:00+00:00",
+            "artifact_path": training_artifact_path,
+        },
+        "validation_summary": {
+            "aggregate_metrics": {
+                "roc_auc": 0.81,
+            }
+        },
+        "references": references,
+    }
+    (bundle_root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def test_ml_scoring_reranks_eligible_candidates_with_probability_blend() -> None:
@@ -215,3 +266,114 @@ def test_ml_scoring_is_deterministic_for_same_inputs() -> None:
     assert first.scoring_version == second.scoring_version
     assert first.candidates[0].combined_score == second.candidates[0].combined_score
     assert first.candidates[0].explanation == second.candidates[0].explanation
+
+
+def test_ml_scoring_shadow_mode_preserves_deterministic_order() -> None:
+    session = _build_session()
+    _seed_dataset(session)
+    with TemporaryDirectory() as temp_dir:
+        trainer = HistoricalBaselineModelService(session, artifact_dir=temp_dir)
+        training = trainer.train_for_dataset(dataset_version="12f_dataset_v1", strategy_name="momentum")
+        _write_persisted_bundle(
+            artifact_dir=temp_dir,
+            bundle_version="12n_shadow_bundle",
+            training_artifact_path=training.artifact_path or "",
+        )
+        service = HistoricalMLScoringService(session, artifact_dir=temp_dir)
+
+        summary = service.score_candidates(
+            dataset_version="12f_dataset_v1",
+            strategy_name="momentum",
+            artifact_path=training.artifact_path or "",
+            bundle_version="12n_shadow_bundle",
+            runtime_control_config=HistoricalMLRuntimeControlConfig(requested_mode="shadow"),
+            candidates=[
+                MLScoringCandidateInput(
+                    symbol="AAPL",
+                    asset_class="stock",
+                    timeframe="1h",
+                    candle_time=datetime(2026, 1, 10, 10, tzinfo=UTC),
+                    source_label="alpaca",
+                    strategy_name="momentum",
+                    base_rank=1,
+                    base_score=0.95,
+                    feature_values={"feature_alpha": 2.0, "feature_beta": 1.0},
+                ),
+                MLScoringCandidateInput(
+                    symbol="MSFT",
+                    asset_class="stock",
+                    timeframe="1h",
+                    candle_time=datetime(2026, 1, 10, 10, tzinfo=UTC),
+                    source_label="alpaca",
+                    strategy_name="momentum",
+                    base_rank=2,
+                    base_score=0.75,
+                    feature_values={"feature_alpha": 7.0, "feature_beta": 3.5},
+                ),
+            ],
+        )
+
+    assert summary.runtime_control is not None
+    assert summary.runtime_control.effective_mode == "shadow"
+    assert [row.symbol for row in summary.candidates] == ["AAPL", "MSFT"]
+    assert summary.candidates[0].combined_score == summary.candidates[0].base_score
+    assert summary.candidates[1].combined_score == summary.candidates[1].base_score
+    assert summary.candidates[0].ml_probability is not None
+    assert summary.candidates[0].runtime_reason_codes == ["shadow_mode"]
+
+
+def test_ml_scoring_runtime_block_surfaces_reason_codes_and_fallback() -> None:
+    session = _build_session()
+    _seed_dataset(session)
+    with TemporaryDirectory() as temp_dir:
+        trainer = HistoricalBaselineModelService(session, artifact_dir=temp_dir)
+        training = trainer.train_for_dataset(dataset_version="12f_dataset_v1", strategy_name="momentum")
+        _write_persisted_bundle(
+            artifact_dir=temp_dir,
+            bundle_version="12n_blocked_bundle",
+            training_artifact_path=training.artifact_path or "",
+            include_validation_reference=False,
+        )
+        service = HistoricalMLScoringService(session, artifact_dir=temp_dir)
+
+        summary = service.score_candidates(
+            dataset_version="12f_dataset_v1",
+            strategy_name="momentum",
+            artifact_path=training.artifact_path or "",
+            bundle_version="12n_blocked_bundle",
+            runtime_control_config=HistoricalMLRuntimeControlConfig(requested_mode="active_rank_only"),
+            candidates=[
+                MLScoringCandidateInput(
+                    symbol="MSFT",
+                    asset_class="stock",
+                    timeframe="1h",
+                    candle_time=datetime(2026, 1, 10, 10, tzinfo=UTC),
+                    source_label="alpaca",
+                    strategy_name="momentum",
+                    base_rank=2,
+                    base_score=0.75,
+                    feature_values={"feature_alpha": 7.0, "feature_beta": 3.5},
+                ),
+                MLScoringCandidateInput(
+                    symbol="AAPL",
+                    asset_class="stock",
+                    timeframe="1h",
+                    candle_time=datetime(2026, 1, 10, 10, tzinfo=UTC),
+                    source_label="alpaca",
+                    strategy_name="momentum",
+                    base_rank=1,
+                    base_score=0.95,
+                    feature_values={"feature_alpha": 2.0, "feature_beta": 1.0},
+                ),
+            ],
+        )
+
+    assert summary.runtime_control is not None
+    assert summary.runtime_control.effective_mode == "blocked"
+    assert "validation_reference_missing" in summary.runtime_control.reason_codes
+    assert summary.rows_scored == 0
+    assert summary.rows_skipped == 2
+    assert [row.symbol for row in summary.candidates] == ["AAPL", "MSFT"]
+    assert all(row.scoring_skipped_reason == "ml_runtime_blocked" for row in summary.candidates)
+    assert all("validation_reference_missing" in row.runtime_reason_codes for row in summary.candidates)
+    assert all(row.ml_probability is None for row in summary.candidates)
