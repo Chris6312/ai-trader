@@ -212,7 +212,7 @@ Deliverables:
 
 ---
 
-### 12H — Walk-Forward Backtesting / Validation
+### [x] 12H — Walk-Forward Backtesting / Validation
 
 Validate models using walk-forward methodology.
 

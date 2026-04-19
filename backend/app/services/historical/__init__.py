@@ -5,6 +5,21 @@ from app.services.historical.historical_strategy_replay import HistoricalStrateg
 from app.services.historical.historical_label_generator import HistoricalLabelGeneratorService
 from app.services.historical.historical_backtesting_policy import HistoricalBacktestingPolicyService
 from app.services.historical.historical_feature_store import HistoricalFeatureStoreService
+from app.services.historical.historical_training_dataset import HistoricalTrainingDatasetService
+from app.services.historical.historical_baseline_model import HistoricalBaselineModelService
+from app.services.historical.historical_walkforward_validation import HistoricalWalkForwardValidationService
+from app.services.historical.historical_walkforward_validation_schemas import (
+    HistoricalWalkForwardValidationConfig,
+    HistoricalWalkForwardValidationSummary,
+    WalkForwardAggregateMetrics,
+    WalkForwardFoldPlan,
+    WalkForwardFoldResult,
+)
+from app.services.historical.historical_baseline_model_schemas import (
+    BaselineModelArtifactRecord,
+    BaselineModelHyperparameters,
+    BaselineModelTrainingSummary,
+)
 from app.services.historical.historical_universe_snapshot import HistoricalUniverseSnapshotService
 from app.services.historical.feature_schemas import FeatureBuildSummary, HistoricalFeatureRecord
 from app.services.historical.historical_replay_schemas import HistoricalReplayPolicy, HistoricalReplayRecord, HistoricalReplaySummary
@@ -23,6 +38,12 @@ from app.services.historical.feature_store_schemas import (
     FeatureDefinitionVersionRecord,
     HistoricalFeatureStoreBuildSummary,
     HistoricalFeatureStoreRowRecord,
+)
+from app.services.historical.historical_training_dataset_schemas import (
+    HistoricalTrainingDataset,
+    TrainingDatasetBuildSummary,
+    TrainingDatasetRowRecord,
+    TrainingDatasetVersionRecord,
 )
 from app.services.historical.regime_detection import RegimeDetectionService
 from app.services.historical.snapshot_persistence import AISnapshotPersistenceService
@@ -53,6 +74,21 @@ __all__ = [
     "HistoricalFeatureStoreBuildSummary",
     "HistoricalFeatureStoreRowRecord",
     "HistoricalFeatureStoreService",
+    "HistoricalTrainingDataset",
+    "HistoricalTrainingDatasetService",
+    "HistoricalBaselineModelService",
+    "BaselineModelArtifactRecord",
+    "BaselineModelHyperparameters",
+    "BaselineModelTrainingSummary",
+    "HistoricalWalkForwardValidationConfig",
+    "HistoricalWalkForwardValidationSummary",
+    "HistoricalWalkForwardValidationService",
+    "WalkForwardAggregateMetrics",
+    "WalkForwardFoldPlan",
+    "WalkForwardFoldResult",
+    "TrainingDatasetBuildSummary",
+    "TrainingDatasetRowRecord",
+    "TrainingDatasetVersionRecord",
     "HistoricalReplayPolicy",
     "HistoricalReplayRecord",
     "HistoricalReplaySummary",
