@@ -129,13 +129,13 @@ def test_ml_bundle_build_persists_bundle_for_registry(monkeypatch) -> None:
         )
         registry_response = client.get("/api/ai/ml/models")
 
-    assert build_response.status_code == 200
-    build_payload = build_response.json()
-    assert build_payload["dataset_version"] == "12f_live_bundle_dataset_v1"
-    assert build_payload["strategy_name"] == "momentum"
-    assert build_payload["verified_bundle"] is True
-    assert Path(build_payload["manifest_path"]).exists()
+        assert build_response.status_code == 200
+        build_payload = build_response.json()
+        assert build_payload["dataset_version"] == "12f_live_bundle_dataset_v1"
+        assert build_payload["strategy_name"] == "momentum"
+        assert build_payload["verified_bundle"] is True
+        assert Path(build_payload["manifest_path"]).exists()
 
-    assert registry_response.status_code == 200
-    registry_rows = registry_response.json()["rows"]
-    assert any(row["bundle_version"] == build_payload["bundle_version"] for row in registry_rows)
+        assert registry_response.status_code == 200
+        registry_rows = registry_response.json()["rows"]
+        assert any(row["bundle_version"] == build_payload["bundle_version"] for row in registry_rows)

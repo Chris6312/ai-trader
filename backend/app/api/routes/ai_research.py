@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import date
+
+from sqlalchemy import func, select
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
@@ -8,11 +11,19 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models import AssetClass
-from app.models.ai_research import RegimeSnapshot, SentimentSnapshot, TechnicalSnapshot, UniverseSnapshot
+from app.models.ai_research import (
+    HistoricalStrategyReplay,
+    RegimeSnapshot,
+    SentimentSnapshot,
+    TechnicalSnapshot,
+    UniverseSnapshot,
+)
 from app.schemas.ai_research_api import (
     AISnapshotInspectionOut,
     MLBundleBuildOut,
     MLBundleBuildRequest,
+    MLDatasetBuildOut,
+    MLDatasetBuildRequest,
     MLDeploymentActionOut,
     MLDeploymentActionRequest,
     MLDeploymentAuditEventOut,
@@ -42,6 +53,7 @@ from app.services.historical.stock_backfill_policy import StockBackfillPolicySer
 from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
 from app.services.historical.historical_ml_transparency import HistoricalMLTransparencyService
 from app.services.historical.historical_ml_bundle_builder import HistoricalMLBundleBuilderService
+from app.services.historical.historical_training_dataset import HistoricalTrainingDatasetService
 
 router = APIRouter(prefix="/api/ai", tags=["ai-research"])
 
@@ -203,6 +215,38 @@ def get_stock_backfill_policy() -> StockBackfillPolicyOut:
         },
     )
 
+
+
+@router.post("/ml/datasets/build", response_model=MLDatasetBuildOut)
+def build_ml_dataset(
+    body: MLDatasetBuildRequest,
+    db: Session = Depends(get_db),
+) -> MLDatasetBuildOut:
+    start_date, end_date = _resolve_live_dataset_window(
+        db,
+        asset_class=body.asset_class,
+        timeframe=body.timeframe,
+        source_label=body.source_label,
+        strategy_name=body.strategy_name,
+        policy_version=body.policy_version,
+    )
+    service = HistoricalTrainingDatasetService(db)
+    try:
+        summary = service.build_dataset(
+            start_date=date.fromisoformat(body.start_date) if body.start_date else start_date,
+            end_date=date.fromisoformat(body.end_date) if body.end_date else end_date,
+            asset_class=(body.asset_class or AssetClass.STOCK),
+            timeframe=body.timeframe or "1h",
+            policy_version=body.policy_version,
+            feature_version=body.feature_version,
+            source_label=body.source_label,
+            strategy_name=body.strategy_name,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return MLDatasetBuildOut(**_serialize_training_dataset_build(summary))
 
 
 @router.post("/ml/bundles/build", response_model=MLBundleBuildOut)
@@ -670,3 +714,48 @@ def _serialize_ml_feature(row) -> MLTransparencyFeatureOut:
 
 def _serialize_ml_row_reference(row) -> MLTransparencyRowReferenceOut:
     return MLTransparencyRowReferenceOut(**asdict(row))
+
+
+def _resolve_live_dataset_window(
+    db: Session,
+    *,
+    asset_class: AssetClass,
+    timeframe: str,
+    source_label: str,
+    strategy_name: str,
+    policy_version: str,
+) -> tuple[date, date]:
+    stmt = (
+        select(
+            func.min(HistoricalStrategyReplay.decision_date),
+            func.max(HistoricalStrategyReplay.decision_date),
+        )
+        .where(
+            HistoricalStrategyReplay.policy_version == policy_version,
+            HistoricalStrategyReplay.asset_class == asset_class,
+            HistoricalStrategyReplay.timeframe == timeframe,
+            HistoricalStrategyReplay.source_label == source_label,
+            HistoricalStrategyReplay.strategy_name == strategy_name,
+        )
+    )
+
+    start_date, end_date = db.execute(stmt).one()
+
+    if start_date is None or end_date is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "no matching historical replay rows found "
+                f"(asset_class={asset_class}, timeframe={timeframe}, "
+                f"strategy={strategy_name}, policy={policy_version})"
+            ),
+        )
+
+    return start_date, end_date
+
+
+def _serialize_training_dataset_build(summary: object) -> dict[str, object]:
+    payload = asdict(summary)
+    payload["start_date"] = payload["start_date"].isoformat()
+    payload["end_date"] = payload["end_date"].isoformat()
+    return payload

@@ -97,6 +97,39 @@ export interface MLTransparencyExplanation {
 
 
 
+export interface MLDatasetBuildRequest {
+  start_date?: string | null
+  end_date?: string | null
+  asset_class?: string | null
+  timeframe?: string | null
+  policy_version?: string
+  feature_version?: string
+  source_label?: string | null
+  strategy_name?: string | null
+}
+
+export interface MLDatasetBuildSummary {
+  dataset_version: string
+  dataset_name: string
+  dataset_definition_version: string
+  asset_class: string
+  timeframe: string
+  source_label: string | null
+  strategy_name: string | null
+  policy_version: string
+  feature_version: string
+  replay_version: string
+  label_version: string
+  start_date: string
+  end_date: string
+  rows_considered: number
+  rows_built: number
+  rows_replaced: number
+  rows_skipped_missing_universe: number
+  rows_skipped_missing_feature: number
+  rows_skipped_missing_label: number
+}
+
 export interface MLBundleBuildRequest {
   dataset_version?: string | null
   strategy_name?: string | null
@@ -118,6 +151,11 @@ export interface MLBundleBuildSummary {
   model_artifact_path: string | null
   verified_bundle: boolean
   notes: string[]
+}
+
+export async function buildMlDataset(payload: MLDatasetBuildRequest): Promise<MLDatasetBuildSummary> {
+  const response = await apiClient.post<MLDatasetBuildSummary>('/api/ai/ml/datasets/build', payload)
+  return response.data
 }
 
 export async function buildMlBundle(payload: MLBundleBuildRequest): Promise<MLBundleBuildSummary> {

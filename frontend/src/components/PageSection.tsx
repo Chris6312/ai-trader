@@ -12,10 +12,10 @@ export function PageSection({ eyebrow, title, description, actions, children }: 
   return (
     <section className="panel page-section">
       <div className="page-section__header">
-        <div>
+        <div className="page-section__intro">
           {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
           <h2>{title}</h2>
-          <p className="muted copy-block">{description}</p>
+          <p className="muted copy-block page-section__description">{description}</p>
         </div>
         {actions ? <div className="page-section__actions">{actions}</div> : null}
       </div>

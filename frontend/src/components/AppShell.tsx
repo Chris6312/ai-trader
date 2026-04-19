@@ -61,27 +61,12 @@ export function AppShell({
                 title={sidebarCollapsed ? item.label : undefined}
               >
                 <Icon size={18} />
-                {!sidebarCollapsed ? (
-                  <span>
-                    <strong>{item.label}</strong>
-                    <small>{item.description}</small>
-                  </span>
-                ) : null}
+                {!sidebarCollapsed ? <strong>{item.label}</strong> : null}
               </button>
             )
           })}
         </nav>
 
-        <div className="sidebar__footer panel panel--soft">
-          {!sidebarCollapsed ? (
-            <>
-              <p className="eyebrow">Phase 6</p>
-              <p className="muted copy-block">
-                Working cockpit views for balances, positions, orders, and operator controls.
-              </p>
-            </>
-          ) : null}
-        </div>
       </aside>
 
       <div className="shell__backdrop" hidden={!sidebarOpen} onClick={onToggleSidebar} />
@@ -104,7 +89,7 @@ export function AppShell({
           <div className="topbar__right">
             <div className="search-pill">
               <Search size={16} />
-              <span>Command/search rail coming in later phases</span>
+              <span>Search coming later</span>
             </div>
             <span className="status-pill">America/New_York</span>
             <span className="status-pill status-pill--good">Paper mode</span>

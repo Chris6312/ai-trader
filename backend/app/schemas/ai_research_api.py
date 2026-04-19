@@ -139,6 +139,39 @@ class MLDeploymentStateOut(BaseModel):
 
 
 
+class MLDatasetBuildRequest(BaseModel):
+    start_date: str | None = None
+    end_date: str | None = None
+    asset_class: AssetClass | None = None
+    timeframe: str | None = None
+    policy_version: str = "12e_policy_v1"
+    feature_version: str = "11c_v1"
+    source_label: str | None = None
+    strategy_name: str | None = None
+
+
+class MLDatasetBuildOut(BaseModel):
+    dataset_version: str
+    dataset_name: str
+    dataset_definition_version: str
+    asset_class: str
+    timeframe: str
+    source_label: str | None = None
+    strategy_name: str | None = None
+    policy_version: str
+    feature_version: str
+    replay_version: str
+    label_version: str
+    start_date: str
+    end_date: str
+    rows_considered: int
+    rows_built: int
+    rows_replaced: int
+    rows_skipped_missing_universe: int
+    rows_skipped_missing_feature: int
+    rows_skipped_missing_label: int
+
+
 class MLBundleBuildRequest(BaseModel):
     dataset_version: str | None = None
     strategy_name: str | None = None

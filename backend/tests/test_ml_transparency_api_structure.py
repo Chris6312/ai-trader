@@ -4,6 +4,8 @@ from app.api.routes.ai_research import router
 from app.schemas.ai_research_api import (
     MLBundleBuildOut,
     MLBundleBuildRequest,
+    MLDatasetBuildOut,
+    MLDatasetBuildRequest,
     MLDeploymentActionOut,
     MLDeploymentStateOut,
     MLTransparencyExplanationOut,
@@ -17,6 +19,7 @@ from app.schemas.ai_research_api import (
 
 def test_ml_transparency_routes_and_schemas_exist() -> None:
     paths = {route.path for route in router.routes}
+    assert "/api/ai/ml/datasets/build" in paths
     assert "/api/ai/ml/bundles/build" in paths
     assert "/api/ai/ml/deployment/state" in paths
     assert "/api/ai/ml/deployment/approve/{bundle_version}" in paths
@@ -31,6 +34,8 @@ def test_ml_transparency_routes_and_schemas_exist() -> None:
     assert "/api/ai/ml/inspection/feature-health" in paths
     assert "/api/ai/ml/explanations/by-symbol-date" in paths
     assert "/api/ai/ml/explanations/historical" in paths
+    assert MLDatasetBuildRequest is not None
+    assert MLDatasetBuildOut is not None
     assert MLBundleBuildRequest is not None
     assert MLBundleBuildOut is not None
     assert MLDeploymentStateOut is not None

@@ -4,6 +4,7 @@ import { ChevronDown, CircleGauge, FlaskConical } from 'lucide-react'
 
 import {
   buildMlBundle,
+  buildMlDataset,
   fetchMlExplanation,
   fetchMlExplanationBySymbolDate,
   fetchMlFeatureHealthPanel,
@@ -25,6 +26,7 @@ type MlExplanation = Awaited<ReturnType<typeof fetchMlExplanation>>
 type MlRuntimeControl = Awaited<ReturnType<typeof fetchMlRuntimeControl>>
 type MlStrategyLearningPanel = Awaited<ReturnType<typeof fetchMlStrategyLearningPanel>>
 type MlFeatureHealthPanel = Awaited<ReturnType<typeof fetchMlFeatureHealthPanel>>
+type MlDatasetBuildSummary = Awaited<ReturnType<typeof buildMlDataset>>
 type MlBundleBuildSummary = Awaited<ReturnType<typeof buildMlBundle>>
 
 type FeatureRecord = {
@@ -103,6 +105,29 @@ function formatHistoricalRowButtonLabel(row: MlRow | null): string {
   }
   return formatRowOptionLabel(row)
 }
+
+
+const STRATEGY_OPTIONS = [
+  { value: 'momentum', label: 'Momentum' },
+  { value: 'trend_continuation', label: 'Trend Continuation' },
+] as const
+
+const STOCK_SOURCE_OPTIONS = [
+  { value: 'alpaca', label: 'Alpaca' },
+  { value: 'yfinance', label: 'YFinance' },
+] as const
+
+const CRYPTO_SOURCE_OPTIONS = [
+  { value: 'kraken_csv', label: 'Kraken CSV + pulled candles' },
+] as const
+
+const TIMEFRAME_OPTIONS = [
+  { value: '5m', label: '5m' },
+  { value: '15m', label: '15m' },
+  { value: '1h', label: '1h' },
+  { value: '4h', label: '4h' },
+  { value: '1d', label: '1d' },
+] as const
 
 function statusToneClass(value: string): string {
   if (
@@ -189,7 +214,11 @@ export function MlTransparencyPage() {
   const [requestedRuntimeMode, setRequestedRuntimeMode] = useState('active_rank_only')
   const [buildDatasetVersion, setBuildDatasetVersion] = useState('')
   const [buildStrategyName, setBuildStrategyName] = useState('momentum')
+  const [buildAssetClass, setBuildAssetClass] = useState('stock')
+  const [buildTimeframe, setBuildTimeframe] = useState('1h')
+  const [buildSourceLabel, setBuildSourceLabel] = useState('alpaca')
   const [includeDriftReview, setIncludeDriftReview] = useState(true)
+  const [datasetBuildResult, setDatasetBuildResult] = useState<MlDatasetBuildSummary | null>(null)
   const [buildResult, setBuildResult] = useState<MlBundleBuildSummary | null>(null)
   const [isHistoricalRowMenuOpen, setIsHistoricalRowMenuOpen] = useState(false)
   const historicalRowMenuRef = useRef<HTMLDivElement | null>(null)
@@ -200,13 +229,43 @@ export function MlTransparencyPage() {
     refetchInterval: 30_000,
   })
 
-  const buildBundleMutation = useMutation({
+  const buildDatasetMutation = useMutation({
     mutationFn: () =>
-      buildMlBundle({
-        dataset_version: buildDatasetVersion.trim() || undefined,
+      buildMlDataset({
+        asset_class: buildAssetClass,
+        timeframe: buildTimeframe.trim() || undefined,
+        source_label: buildSourceLabel.trim() || undefined,
         strategy_name: buildStrategyName.trim() || undefined,
-        include_drift_review: includeDriftReview,
       }),
+    onSuccess: (summary) => {
+      setDatasetBuildResult(summary)
+      setBuildDatasetVersion(summary.dataset_version)
+    },
+  })
+
+  const buildBundleMutation = useMutation({
+    mutationFn: async () => {
+      const datasetVersion = buildDatasetVersion.trim()
+      const resolvedDatasetVersion = datasetVersion || (await buildMlDataset({
+        asset_class: buildAssetClass,
+        timeframe: buildTimeframe.trim() || undefined,
+        source_label: buildSourceLabel.trim() || undefined,
+        strategy_name: buildStrategyName.trim() || undefined,
+      })).dataset_version
+
+      if (!datasetVersion) {
+        setBuildDatasetVersion(resolvedDatasetVersion)
+      }
+
+      return buildMlBundle({
+        dataset_version: resolvedDatasetVersion,
+        strategy_name: buildStrategyName.trim() || undefined,
+        source_label: buildSourceLabel.trim() || undefined,
+        asset_class: buildAssetClass,
+        timeframe: buildTimeframe.trim() || undefined,
+        include_drift_review: includeDriftReview,
+      })
+    },
     onSuccess: async (summary) => {
       setBuildResult(summary)
       setSelectedBundleVersion(summary.bundle_version)
@@ -219,6 +278,27 @@ export function MlTransparencyPage() {
   })
 
   const modelRows = (registryQuery.data ?? []) as ModelRegistryRow[]
+
+  const sourceOptions = buildAssetClass === 'crypto' ? CRYPTO_SOURCE_OPTIONS : STOCK_SOURCE_OPTIONS
+  const datasetVersionOptions = useMemo(() => {
+    const options = [{ value: '', label: 'Latest matching dataset (auto)' }]
+    if (datasetBuildResult?.dataset_version) {
+      options.push({ value: datasetBuildResult.dataset_version, label: datasetBuildResult.dataset_version })
+    }
+    for (const item of modelRows) {
+      if (item.dataset_version && !options.some((option) => option.value === item.dataset_version)) {
+        options.push({ value: item.dataset_version, label: item.dataset_version })
+      }
+    }
+    return options
+  }, [datasetBuildResult?.dataset_version, modelRows])
+
+
+  useEffect(() => {
+    if (!sourceOptions.some((option) => option.value === buildSourceLabel)) {
+      setBuildSourceLabel(sourceOptions[0]?.value ?? '')
+    }
+  }, [buildAssetClass, buildSourceLabel, sourceOptions])
 
   useEffect(() => {
     if (modelRows.length === 0) {
@@ -438,92 +518,170 @@ export function MlTransparencyPage() {
         <div className="grid gap-6 xl:grid-cols-12">
           <div className="xl:col-span-7 min-w-0">
             <div className="space-y-6">
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
-                <label className="block min-w-0">
-                  <span className="mb-2 block text-sm text-slate-300">Bundle</span>
-                  <select
-                    value={selectedBundleVersion}
-                    onChange={(event) => {
-                      setSelectedBundleVersion(event.target.value)
-                      setSelectedRowKey('')
-                    }}
-                    className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
-                  >
-                    {modelRows.map((item) => (
-                      <option key={item.bundle_version} value={item.bundle_version}>
-                        {humanizeToken(item.strategy_name)} · {item.bundle_version}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <div className="mt-3 grid gap-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-2 xl:gap-6">
+			    <div className="flex min-w-0 flex-col gap-2">
+				  <label htmlFor="ml-bundle-version" className="text-sm text-slate-300">
+				  Bundle
+				  </label>
+				  <select
+				    id="ml-bundle-version"
+				    value={selectedBundleVersion}
+				    onChange={(event) => {
+					  setSelectedBundleVersion(event.target.value)
+					  setSelectedRowKey('')
+				    }}
+				    className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+				  >
+				    {modelRows.map((item) => (
+					  <option key={item.bundle_version} value={item.bundle_version}>
+					    {humanizeToken(item.strategy_name)} · {item.bundle_version}
+					  </option>
+				    ))}
+				  </select>
+			    </div>
 
-                <label className="block min-w-0">
-                  <span className="mb-2 block text-sm text-slate-300">Requested mode</span>
-                  <select
-                    value={requestedRuntimeMode}
-                    onChange={(event) => setRequestedRuntimeMode(event.target.value)}
-                    className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
-                  >
-                    <option value="disabled">Disabled</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="active_rank_only">Active rank only</option>
-                  </select>
-                </label>
-              </div>
+			  <div className="flex min-w-0 flex-col gap-2">
+				<label htmlFor="ml-requested-mode" className="text-sm text-slate-300">
+				  Requested mode
+				</label>
+				<select
+				  id="ml-requested-mode"
+				  value={requestedRuntimeMode}
+				  onChange={(event) => setRequestedRuntimeMode(event.target.value)}
+				  className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+				>
+				  <option value="disabled">Disabled</option>
+				  <option value="shadow">Shadow</option>
+				  <option value="active_rank_only">Active rank only</option>
+				</select>
+			  </div>
+			</div>
 
-              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="ml-trigger-card rounded-2xl border border-slate-800 bg-slate-950/70">
+                <div className="ml-trigger-card__header">
                   <div>
                     <p className="eyebrow">Live bundle trigger</p>
                     <h3 className="text-lg font-semibold text-slate-50">Build and persist a bundle for this page</h3>
-                    <p className="muted mt-1">Leave dataset version blank to use the latest matching training dataset.</p>
+                    <p className="muted mt-1">Leave dataset version blank and the page will mint a dataset from matching replay rows before it persists the bundle.</p>
                   </div>
                 </div>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <label className="block min-w-0">
-                    <span className="mb-2 block text-sm text-slate-300">Dataset version</span>
-                    <input
+                <div className="ml-trigger-form">
+                  <label className="ml-trigger-field ml-trigger-field--dataset">
+                    <span className="text-sm text-slate-300">Dataset version</span>
+                    <select
                       value={buildDatasetVersion}
                       onChange={(event) => setBuildDatasetVersion(event.target.value)}
                       className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
-                      placeholder="latest matching dataset"
-                    />
+                    >
+                      {datasetVersionOptions.map((option) => (
+                        <option key={option.value || 'auto'} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
-                  <label className="block min-w-0">
-                    <span className="mb-2 block text-sm text-slate-300">Strategy name</span>
-                    <input
+                  <label className="ml-trigger-field ml-trigger-field--strategy">
+                    <span className="text-sm text-slate-300">Strategy name</span>
+                    <select
                       value={buildStrategyName}
                       onChange={(event) => setBuildStrategyName(event.target.value)}
                       className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
-                      placeholder="momentum"
-                    />
+                    >
+                      {STRATEGY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
-                  <label className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-800 px-4 py-3 text-sm text-slate-200">
+                  <label className="ml-trigger-field ml-trigger-field--asset">
+                    <span className="text-sm text-slate-300">Asset class</span>
+                    <select
+                      value={buildAssetClass}
+                      onChange={(event) => setBuildAssetClass(event.target.value)}
+                      className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+                    >
+                      <option value="stock">Stock</option>
+                      <option value="crypto">Crypto</option>
+                    </select>
+                  </label>
+                  <label className="ml-trigger-field ml-trigger-field--timeframe">
+                    <span className="text-sm text-slate-300">Timeframe</span>
+                    <select
+                      value={buildTimeframe}
+                      onChange={(event) => setBuildTimeframe(event.target.value)}
+                      className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+                    >
+                      {TIMEFRAME_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="ml-trigger-field ml-trigger-field--source">
+                    <span className="text-sm text-slate-300">Source label</span>
+                    <select
+                      value={buildSourceLabel}
+                      onChange={(event) => setBuildSourceLabel(event.target.value)}
+                      className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+                    >
+                      {sourceOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="ml-trigger-checkbox text-sm text-slate-200">
                     <input
                       type="checkbox"
                       checked={includeDriftReview}
                       onChange={(event) => setIncludeDriftReview(event.target.checked)}
                     />
-                    Include drift review artifact
+                    <span>Include drift review artifact</span>
                   </label>
                 </div>
-                <div className="mt-4 flex flex-wrap items-center gap-3">
+                <div className="ml-trigger-actions">
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    disabled={buildDatasetMutation.isPending || buildBundleMutation.isPending}
+                    onClick={() => buildDatasetMutation.mutate()}
+                  >
+                    {buildDatasetMutation.isPending ? 'Building dataset…' : 'Build live dataset'}
+                  </button>
                   <button
                     type="button"
                     className="button"
-                    disabled={buildBundleMutation.isPending}
+                    disabled={buildBundleMutation.isPending || buildDatasetMutation.isPending}
                     onClick={() => buildBundleMutation.mutate()}
                   >
                     {buildBundleMutation.isPending ? 'Building bundle…' : 'Build live bundle'}
                   </button>
+                  {datasetBuildResult ? (
+                    <span className="status-pill status-pill--good">
+                      Dataset {datasetBuildResult.dataset_version}
+                    </span>
+                  ) : null}
                   {buildResult ? (
                     <span className={`status-pill ${buildResult.verified_bundle ? 'status-pill--good' : 'status-pill--warn'}`}>
                       {buildResult.bundle_version}
                     </span>
                   ) : null}
+                  {buildDatasetMutation.isError ? (
+                    <p className="muted break-words">
+                      {(buildDatasetMutation.error as Error).message || 'Dataset build failed.'}
+                    </p>
+                  ) : null}
                   {buildBundleMutation.isError ? (
                     <p className="muted break-words">
                       {(buildBundleMutation.error as Error).message || 'Bundle build failed.'}
+                    </p>
+                  ) : null}
+                  {!buildDatasetMutation.isError && datasetBuildResult ? (
+                    <p className="muted break-words">
+                      Built {datasetBuildResult.rows_built} dataset rows across {datasetBuildResult.start_date} to {datasetBuildResult.end_date}.
                     </p>
                   ) : null}
                   {!buildBundleMutation.isError && buildResult ? (
