@@ -11,6 +11,7 @@ from app.models import AssetClass
 from app.models.ai_research import RegimeSnapshot, SentimentSnapshot, TechnicalSnapshot, UniverseSnapshot
 from app.schemas.ai_research_api import (
     AISnapshotInspectionOut,
+    MLRuntimeControlOut,
     MLTransparencyExplanationOut,
     MLTransparencyFeatureOut,
     MLTransparencyModelOut,
@@ -25,6 +26,8 @@ from app.schemas.ai_research_api import (
     UniverseSnapshotListOut,
     UniverseSnapshotOut,
 )
+from app.services.historical.historical_ml_runtime_controls import HistoricalMLRuntimeControlService
+from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
 from app.services.historical.historical_ml_transparency import HistoricalMLTransparencyService
 
 router = APIRouter(prefix="/api/ai", tags=["ai-research"])
@@ -163,6 +166,34 @@ def get_latest_universe_rows(
         source_label=source_label or latest_row.source_label,
         asset_class=asset_class or latest_row.asset_class,
     )
+
+
+@router.get("/ml/runtime", response_model=MLRuntimeControlOut)
+def get_ml_runtime_controls(
+    bundle_version: str = Query(..., min_length=1),
+    strategy_name: str = Query(..., min_length=1),
+    requested_mode: str = Query(default="active_rank_only", pattern="^(disabled|shadow|active_rank_only)$"),
+    stale_after_days: int = Query(default=14, ge=1, le=365),
+    minimum_validation_metric: float | None = Query(default=None, ge=0.0, le=1.0),
+    validation_metric_key: str = Query(default="roc_auc", min_length=1),
+    required_features: list[str] | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> MLRuntimeControlOut:
+    service = HistoricalMLRuntimeControlService(
+        db,
+        config=HistoricalMLRuntimeControlConfig(
+            requested_mode=requested_mode,
+            stale_after_days=stale_after_days,
+            minimum_validation_metric=minimum_validation_metric,
+            validation_metric_key=validation_metric_key,
+            required_feature_keys=list(required_features or []),
+        ),
+    )
+    summary = service.evaluate_runtime_controls(
+        bundle_version=bundle_version,
+        strategy_name=strategy_name,
+    )
+    return MLRuntimeControlOut(**asdict(summary))
 
 
 @router.get("/ml/models", response_model=MLTransparencyModelRegistryOut)

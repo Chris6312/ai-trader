@@ -119,6 +119,27 @@ class MLTransparencyModelOut(BaseModel):
     verified_artifact: bool
 
 
+class MLRuntimeControlOut(BaseModel):
+    bundle_version: str
+    strategy_name: str
+    requested_mode: str
+    effective_mode: str
+    ranking_policy: str
+    ml_scoring_allowed: bool
+    ml_influence_allowed: bool
+    deterministic_fallback_active: bool
+    verified_artifact: bool
+    validation_reference_present: bool
+    bundle_age_days: int | None = None
+    stale_after_days: int | None = None
+    validation_metric_key: str | None = None
+    validation_metric_value: float | None = None
+    evaluated_at: datetime | None = None
+    reason_codes: list[str]
+    missing_feature_keys: list[str]
+    metadata: dict[str, object]
+
+
 class MLTransparencyFeatureOut(BaseModel):
     feature_key: str
     tree_importance: float | None = None

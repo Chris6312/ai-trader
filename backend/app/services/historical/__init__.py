@@ -26,6 +26,10 @@ from app.services.historical.historical_ml_scoring_schemas import (
     MLScoredCandidateRecord,
     MLScoringCandidateInput,
 )
+from app.services.historical.historical_ml_runtime_controls_schemas import (
+    HistoricalMLRuntimeControlConfig,
+    HistoricalMLRuntimeControlSummary,
+)
 from app.services.historical.historical_feature_importance_review_schemas import (
     FeatureDriftRecord,
     FeatureImportanceFoldReview,
@@ -132,6 +136,13 @@ def __getattr__(name: str):
 
         return HistoricalMLScoringService
 
+    if name == "HistoricalMLRuntimeControlService":
+        from app.services.historical.historical_ml_runtime_controls import (
+            HistoricalMLRuntimeControlService,
+        )
+
+        return HistoricalMLRuntimeControlService
+
     if name == "HistoricalRetrainingScheduleService":
         from app.services.historical.historical_retraining_schedule import (
             HistoricalRetrainingScheduleService,
@@ -178,6 +189,9 @@ __all__ = [
     "HistoricalLabelGeneratorService",
     "HistoricalLabelPolicy",
     "HistoricalMLScoringConfig",
+    "HistoricalMLRuntimeControlConfig",
+    "HistoricalMLRuntimeControlService",
+    "HistoricalMLRuntimeControlSummary",
     "HistoricalMLScoringService",
     "HistoricalMLScoringSummary",
     "HistoricalMLTransparencyService",

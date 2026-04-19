@@ -7,6 +7,8 @@ import {
   fetchMlModelRegistry,
   fetchMlOverview,
   fetchMlRows,
+  fetchMlRuntimeControl,
+  type MLRuntimeControlSummary,
   type MLTransparencyExplanation,
   type MLTransparencyFeatureRecord,
 } from '../api/mlTransparency'
@@ -76,6 +78,7 @@ export function MlTransparencyPage() {
   const modelRows = registryQuery.data ?? []
   const [selectedBundleVersion, setSelectedBundleVersion] = useState<string>('')
   const [selectedRowKey, setSelectedRowKey] = useState<string>('')
+  const [requestedRuntimeMode, setRequestedRuntimeMode] = useState<string>('active_rank_only')
 
   useEffect(() => {
     if (!selectedBundleVersion && modelRows.length > 0) {
@@ -113,7 +116,14 @@ export function MlTransparencyPage() {
     [modelRows, selectedBundleVersion],
   )
 
+  const runtimeQuery = useQuery({
+    queryKey: ['ml-runtime', selectedBundleVersion, selectedModel?.strategy_name, requestedRuntimeMode],
+    queryFn: () => fetchMlRuntimeControl(selectedBundleVersion, selectedModel?.strategy_name ?? '', requestedRuntimeMode),
+    enabled: Boolean(selectedBundleVersion && selectedModel?.strategy_name),
+  })
+
   const explanation = explanationQuery.data as MLTransparencyExplanation | undefined
+  const runtime = runtimeQuery.data as MLRuntimeControlSummary | undefined
 
   return (
     <div className="page-grid">
@@ -137,6 +147,14 @@ export function MlTransparencyPage() {
                     {item.strategy_name} · {item.bundle_version}
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="field-shell">
+              <span>Requested mode</span>
+              <select value={requestedRuntimeMode} onChange={(event) => setRequestedRuntimeMode(event.target.value)}>
+                <option value="disabled">Disabled</option>
+                <option value="shadow">Shadow</option>
+                <option value="active_rank_only">Active rank-only</option>
               </select>
             </label>
           </div>
@@ -173,6 +191,49 @@ export function MlTransparencyPage() {
               detail={`Validation ref: ${selectedModel?.validation_version ?? 'not bundled yet'}`}
             />
           </div>
+          <article className="list-card">
+            <div className="list-card__header">
+              <div>
+                <p className="eyebrow">Runtime guardrails</p>
+                <h3>ML participation cage</h3>
+              </div>
+              <div className="stack-inline stack-inline--tight">
+                <span className={`status-pill ${runtime?.effective_mode === 'active_rank_only' ? 'status-pill--good' : runtime?.effective_mode === 'blocked' ? 'status-pill--warn' : ''}`}>
+                  {runtime?.effective_mode ?? 'loading'}
+                </span>
+                <span className="status-pill">{runtime?.ranking_policy ?? 'deterministic_only'}</span>
+              </div>
+            </div>
+            <QueryState
+              isLoading={runtimeQuery.isLoading}
+              isError={runtimeQuery.isError}
+              isEmpty={!runtime}
+              loadingLabel="Evaluating runtime guardrails…"
+              errorLabel="Runtime control status could not be loaded."
+              emptyLabel="Pick a bundle to evaluate runtime guardrails."
+            >
+              {runtime ? (
+                <div className="stack-list stack-list--tight">
+                  <div className="summary-grid">
+                    <SummaryCard label="Requested mode" value={runtime.requested_mode} />
+                    <SummaryCard label="Effective mode" value={runtime.effective_mode} />
+                    <SummaryCard label="Bundle age" value={runtime.bundle_age_days !== null ? `${runtime.bundle_age_days}d` : '—'} detail={`Stale after ${runtime.stale_after_days ?? '—'}d`} />
+                    <SummaryCard label="Validation" value={runtime.validation_metric_value !== null ? formatMetric(runtime.validation_metric_value) : '—'} detail={runtime.validation_metric_key ?? 'metric'} />
+                  </div>
+                  <div className="stack-inline stack-inline--tight">
+                    {(runtime.reason_codes.length > 0 ? runtime.reason_codes : ['guardrails_clear']).map((item) => (
+                      <span key={item} className={`status-pill ${item === 'guardrails_clear' ? 'status-pill--good' : item === 'shadow_mode' ? '' : 'status-pill--warn'}`}>
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                  {runtime.missing_feature_keys.length > 0 ? (
+                    <p className="muted">Missing features: {runtime.missing_feature_keys.join(', ')}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </QueryState>
+          </article>
         </QueryState>
       </PageSection>
 

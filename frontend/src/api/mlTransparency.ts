@@ -95,3 +95,40 @@ export async function fetchMlExplanation(
   })
   return response.data
 }
+
+
+export interface MLRuntimeControlSummary {
+  bundle_version: string
+  strategy_name: string
+  requested_mode: string
+  effective_mode: string
+  ranking_policy: string
+  ml_scoring_allowed: boolean
+  ml_influence_allowed: boolean
+  deterministic_fallback_active: boolean
+  verified_artifact: boolean
+  validation_reference_present: boolean
+  bundle_age_days: number | null
+  stale_after_days: number | null
+  validation_metric_key: string | null
+  validation_metric_value: number | null
+  evaluated_at: string | null
+  reason_codes: string[]
+  missing_feature_keys: string[]
+  metadata: Record<string, unknown>
+}
+
+export async function fetchMlRuntimeControl(
+  bundleVersion: string,
+  strategyName: string,
+  requestedMode: string,
+): Promise<MLRuntimeControlSummary> {
+  const response = await apiClient.get<MLRuntimeControlSummary>('/api/ai/ml/runtime', {
+    params: {
+      bundle_version: bundleVersion,
+      strategy_name: strategyName,
+      requested_mode: requestedMode,
+    },
+  })
+  return response.data
+}
