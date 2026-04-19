@@ -51,6 +51,34 @@ export interface MLTransparencyOverview {
   sample_rows: MLTransparencyRowReference[]
 }
 
+
+
+export interface MLTransparencyStrategyLearningPanel {
+  bundle_version: string
+  model_version: string
+  dataset_version: string
+  strategy_name: string
+  runtime_control: MLRuntimeControlSummary | null
+  summary: Record<string, unknown>
+  global_feature_importance: MLTransparencyFeatureRecord[]
+  regime_feature_importance: MLTransparencyFeatureRecord[]
+  drift_signals: MLTransparencyFeatureRecord[]
+  highlighted_rows: MLTransparencyRowReference[]
+}
+
+export interface MLTransparencyFeatureHealthPanel {
+  bundle_version: string
+  model_version: string
+  dataset_version: string
+  strategy_name: string
+  runtime_control: MLRuntimeControlSummary | null
+  validation_summary: Record<string, unknown>
+  drift_summary: Record<string, unknown>
+  global_feature_leaders: MLTransparencyFeatureRecord[]
+  regime_feature_leaders: MLTransparencyFeatureRecord[]
+  overlapping_feature_keys: string[]
+}
+
 export interface MLTransparencyExplanation {
   bundle_version: string
   model_version: string
@@ -129,6 +157,39 @@ export async function fetchMlRuntimeControl(
       strategy_name: strategyName,
       requested_mode: requestedMode,
     },
+  })
+  return response.data
+}
+
+
+export async function fetchMlStrategyLearningPanel(
+  bundleVersion: string,
+  requestedMode: string,
+): Promise<MLTransparencyStrategyLearningPanel> {
+  const response = await apiClient.get<MLTransparencyStrategyLearningPanel>('/api/ai/ml/inspection/strategy', {
+    params: { bundle_version: bundleVersion, requested_mode: requestedMode },
+  })
+  return response.data
+}
+
+export async function fetchMlExplanationBySymbolDate(
+  bundleVersion: string,
+  symbol: string,
+  decisionDate: string,
+): Promise<MLTransparencyExplanation> {
+  const response = await apiClient.get<MLTransparencyExplanation>('/api/ai/ml/explanations/by-symbol-date', {
+    params: { bundle_version: bundleVersion, symbol, decision_date: decisionDate },
+  })
+  return response.data
+}
+
+
+export async function fetchMlFeatureHealthPanel(
+  bundleVersion: string,
+  requestedMode: string,
+): Promise<MLTransparencyFeatureHealthPanel> {
+  const response = await apiClient.get<MLTransparencyFeatureHealthPanel>('/api/ai/ml/inspection/feature-health', {
+    params: { bundle_version: bundleVersion, requested_mode: requestedMode },
   })
   return response.data
 }

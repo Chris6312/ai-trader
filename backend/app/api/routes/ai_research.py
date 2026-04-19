@@ -13,10 +13,12 @@ from app.schemas.ai_research_api import (
     AISnapshotInspectionOut,
     MLRuntimeControlOut,
     MLTransparencyExplanationOut,
+    MLTransparencyFeatureHealthPanelOut,
     MLTransparencyFeatureOut,
     MLTransparencyModelOut,
     MLTransparencyModelRegistryOut,
     MLTransparencyOverviewOut,
+    MLTransparencyStrategyLearningPanelOut,
     MLTransparencyRowListOut,
     MLTransparencyRowReferenceOut,
     RegimeSnapshotOut,
@@ -245,6 +247,130 @@ def get_ml_historical_rows(
     return MLTransparencyRowListOut(
         rows=[_serialize_ml_row_reference(item) for item in rows],
         returned=len(rows),
+    )
+
+
+@router.get("/ml/inspection/strategy", response_model=MLTransparencyStrategyLearningPanelOut)
+def get_ml_strategy_learning_panel(
+    bundle_version: str = Query(..., min_length=1),
+    requested_mode: str = Query(default="active_rank_only", pattern="^(disabled|shadow|active_rank_only)$"),
+    stale_after_days: int = Query(default=14, ge=1, le=365),
+    minimum_validation_metric: float | None = Query(default=None, ge=0.0, le=1.0),
+    validation_metric_key: str = Query(default="roc_auc", min_length=1),
+    db: Session = Depends(get_db),
+) -> MLTransparencyStrategyLearningPanelOut:
+    service = HistoricalMLTransparencyService(db)
+    runtime_service = HistoricalMLRuntimeControlService(
+        db,
+        config=HistoricalMLRuntimeControlConfig(
+            requested_mode=requested_mode,
+            stale_after_days=stale_after_days,
+            minimum_validation_metric=minimum_validation_metric,
+            validation_metric_key=validation_metric_key,
+        ),
+    )
+    try:
+        overview = service.get_overview(bundle_version=bundle_version, row_limit=5)
+        runtime_control = runtime_service.evaluate_runtime_controls(
+            bundle_version=bundle_version,
+            strategy_name=overview.model.strategy_name,
+        )
+        panel = service.get_strategy_learning_panel(
+            bundle_version=bundle_version,
+            runtime_control=runtime_control,
+            row_limit=5,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return MLTransparencyStrategyLearningPanelOut(
+        bundle_version=panel.bundle_version,
+        model_version=panel.model_version,
+        dataset_version=panel.dataset_version,
+        strategy_name=panel.strategy_name,
+        runtime_control=MLRuntimeControlOut(**asdict(panel.runtime_control)) if panel.runtime_control is not None else None,
+        summary=panel.summary,
+        global_feature_importance=[_serialize_ml_feature(item) for item in panel.global_feature_importance],
+        regime_feature_importance=[_serialize_ml_feature(item) for item in panel.regime_feature_importance],
+        drift_signals=[_serialize_ml_feature(item) for item in panel.drift_signals],
+        highlighted_rows=[_serialize_ml_row_reference(item) for item in panel.highlighted_rows],
+    )
+
+
+@router.get("/ml/inspection/feature-health", response_model=MLTransparencyFeatureHealthPanelOut)
+def get_ml_feature_health_panel(
+    bundle_version: str = Query(..., min_length=1),
+    requested_mode: str = Query(default="active_rank_only", pattern="^(disabled|shadow|active_rank_only)$"),
+    stale_after_days: int = Query(default=14, ge=1, le=365),
+    minimum_validation_metric: float | None = Query(default=None, ge=0.0, le=1.0),
+    validation_metric_key: str = Query(default="roc_auc", min_length=1),
+    db: Session = Depends(get_db),
+) -> MLTransparencyFeatureHealthPanelOut:
+    service = HistoricalMLTransparencyService(db)
+    runtime_service = HistoricalMLRuntimeControlService(
+        db,
+        config=HistoricalMLRuntimeControlConfig(
+            requested_mode=requested_mode,
+            stale_after_days=stale_after_days,
+            minimum_validation_metric=minimum_validation_metric,
+            validation_metric_key=validation_metric_key,
+        ),
+    )
+    try:
+        overview = service.get_overview(bundle_version=bundle_version, row_limit=5)
+        runtime_control = runtime_service.evaluate_runtime_controls(
+            bundle_version=bundle_version,
+            strategy_name=overview.model.strategy_name,
+        )
+        panel = service.get_feature_health_panel(
+            bundle_version=bundle_version,
+            runtime_control=runtime_control,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return MLTransparencyFeatureHealthPanelOut(
+        bundle_version=panel.bundle_version,
+        model_version=panel.model_version,
+        dataset_version=panel.dataset_version,
+        strategy_name=panel.strategy_name,
+        runtime_control=MLRuntimeControlOut(**asdict(panel.runtime_control)) if panel.runtime_control is not None else None,
+        validation_summary=panel.validation_summary,
+        drift_summary=panel.drift_summary,
+        global_feature_leaders=[_serialize_ml_feature(item) for item in panel.global_feature_leaders],
+        regime_feature_leaders=[_serialize_ml_feature(item) for item in panel.regime_feature_leaders],
+        overlapping_feature_keys=panel.overlapping_feature_keys,
+    )
+
+
+@router.get("/ml/explanations/by-symbol-date", response_model=MLTransparencyExplanationOut)
+def get_ml_historical_explanation_by_symbol_date(
+    bundle_version: str = Query(..., min_length=1),
+    symbol: str = Query(..., min_length=1),
+    decision_date: str = Query(..., min_length=10, max_length=10),
+    db: Session = Depends(get_db),
+) -> MLTransparencyExplanationOut:
+    service = HistoricalMLTransparencyService(db)
+    try:
+        explanation = service.explain_symbol_on_decision_date(
+            bundle_version=bundle_version,
+            symbol=symbol,
+            decision_date=decision_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return MLTransparencyExplanationOut(
+        bundle_version=explanation.bundle_version,
+        model_version=explanation.model_version,
+        dataset_version=explanation.dataset_version,
+        strategy_name=explanation.strategy_name,
+        row=_serialize_ml_row_reference(explanation.row),
+        score=explanation.score,
+        probability=explanation.probability,
+        confidence=explanation.confidence,
+        baseline_expectation=explanation.baseline_expectation,
+        positive_contributors=[_serialize_ml_feature(item) for item in explanation.positive_contributors],
+        negative_contributors=[_serialize_ml_feature(item) for item in explanation.negative_contributors],
+        feature_snapshot=explanation.feature_snapshot,
+        skipped_reason=explanation.skipped_reason,
     )
 
 

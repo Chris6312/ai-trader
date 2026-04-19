@@ -184,6 +184,19 @@ class MLTransparencyRowListOut(BaseModel):
     returned: int
 
 
+class MLTransparencyFeatureHealthPanelOut(BaseModel):
+    bundle_version: str
+    model_version: str
+    dataset_version: str
+    strategy_name: str
+    runtime_control: MLRuntimeControlOut | None = None
+    validation_summary: dict[str, object]
+    drift_summary: dict[str, object]
+    global_feature_leaders: list[MLTransparencyFeatureOut]
+    regime_feature_leaders: list[MLTransparencyFeatureOut]
+    overlapping_feature_keys: list[str]
+
+
 class MLTransparencyExplanationOut(BaseModel):
     bundle_version: str
     model_version: str
@@ -198,3 +211,16 @@ class MLTransparencyExplanationOut(BaseModel):
     negative_contributors: list[MLTransparencyFeatureOut]
     feature_snapshot: dict[str, object]
     skipped_reason: str | None = None
+
+
+class MLTransparencyStrategyLearningPanelOut(BaseModel):
+    bundle_version: str
+    model_version: str
+    dataset_version: str
+    strategy_name: str
+    runtime_control: MLRuntimeControlOut | None = None
+    summary: dict[str, object]
+    global_feature_importance: list[MLTransparencyFeatureOut]
+    regime_feature_importance: list[MLTransparencyFeatureOut]
+    drift_signals: list[MLTransparencyFeatureOut]
+    highlighted_rows: list[MLTransparencyRowReferenceOut]

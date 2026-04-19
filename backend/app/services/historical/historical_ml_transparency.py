@@ -91,6 +91,20 @@ class TransparencyStrategyLearningPanel:
 
 
 @dataclass(slots=True)
+class TransparencyFeatureHealthPanel:
+    bundle_version: str
+    model_version: str
+    dataset_version: str
+    strategy_name: str
+    runtime_control: HistoricalMLRuntimeControlSummary | None = None
+    validation_summary: dict[str, object] = field(default_factory=dict)
+    drift_summary: dict[str, object] = field(default_factory=dict)
+    global_feature_leaders: list[TransparencyFeatureRecord] = field(default_factory=list)
+    regime_feature_leaders: list[TransparencyFeatureRecord] = field(default_factory=list)
+    overlapping_feature_keys: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class TransparencyExplanation:
     bundle_version: str
     model_version: str
@@ -373,6 +387,54 @@ class HistoricalMLTransparencyService:
             regime_feature_importance=overview.regime_feature_importance[:5],
             drift_signals=overview.drift_signals[:5],
             highlighted_rows=overview.sample_rows[:row_limit],
+        )
+
+    def get_feature_health_panel(
+        self,
+        *,
+        bundle_version: str,
+        runtime_control: HistoricalMLRuntimeControlSummary | None = None,
+    ) -> TransparencyFeatureHealthPanel:
+        overview = self.get_overview(bundle_version=bundle_version, row_limit=5)
+        drift_signals = overview.drift_signals[:]
+        flagged = [item for item in drift_signals if item.drift_flagged]
+        highest_psi = max(
+            (item.population_stability_index for item in drift_signals if item.population_stability_index is not None),
+            default=None,
+        )
+        highest_shift = max(
+            (item.standardized_mean_shift for item in drift_signals if item.standardized_mean_shift is not None),
+            default=None,
+        )
+        global_feature_keys = [item.feature_key for item in overview.global_feature_importance[:5]]
+        regime_feature_keys = [item.feature_key for item in overview.regime_feature_importance[:5]]
+        overlap_set = set(regime_feature_keys)
+        overlap = [key for key in global_feature_keys if key in overlap_set]
+        validation_summary: dict[str, object] = {
+            "validation_version": overview.model.validation_version,
+            "training_metrics": overview.training_metrics,
+            "runtime_context": runtime_control.effective_mode if runtime_control is not None else None,
+            "ranking_policy": runtime_control.ranking_policy if runtime_control is not None else None,
+            "verified_artifact": overview.model.verified_artifact,
+        }
+        drift_summary: dict[str, object] = {
+            "drift_report_version": overview.model.drift_report_version,
+            "flagged_feature_count": len(flagged),
+            "flagged_feature_keys": [item.feature_key for item in flagged[:5]],
+            "highest_population_stability_index": highest_psi,
+            "highest_standardized_mean_shift": highest_shift,
+        }
+        return TransparencyFeatureHealthPanel(
+            bundle_version=bundle_version,
+            model_version=overview.model.model_version,
+            dataset_version=overview.model.dataset_version,
+            strategy_name=overview.model.strategy_name,
+            runtime_control=runtime_control,
+            validation_summary=validation_summary,
+            drift_summary=drift_summary,
+            global_feature_leaders=overview.global_feature_importance[:5],
+            regime_feature_leaders=overview.regime_feature_importance[:5],
+            overlapping_feature_keys=overlap,
         )
 
     def _load_manifest(self, bundle_version: str) -> tuple[Path, dict[str, object]]:
