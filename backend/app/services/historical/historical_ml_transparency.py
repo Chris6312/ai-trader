@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import gettempdir
+from datetime import date
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.ai_research import TrainingDatasetRow
 from app.services.historical.historical_ml_bundle_inspector import HistoricalMLBundleInspector
-from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
+from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig, HistoricalMLRuntimeControlSummary
 from app.services.historical.historical_ml_scoring_schemas import MLScoringCandidateInput
 
 if TYPE_CHECKING:
@@ -71,6 +72,22 @@ class TransparencyOverview:
     drift_signals: list[TransparencyFeatureRecord] = field(default_factory=list)
     health: dict[str, object] = field(default_factory=dict)
     sample_rows: list[TransparencyRowReference] = field(default_factory=list)
+
+
+
+
+@dataclass(slots=True)
+class TransparencyStrategyLearningPanel:
+    bundle_version: str
+    model_version: str
+    dataset_version: str
+    strategy_name: str
+    runtime_control: HistoricalMLRuntimeControlSummary | None = None
+    summary: dict[str, object] = field(default_factory=dict)
+    global_feature_importance: list[TransparencyFeatureRecord] = field(default_factory=list)
+    regime_feature_importance: list[TransparencyFeatureRecord] = field(default_factory=list)
+    drift_signals: list[TransparencyFeatureRecord] = field(default_factory=list)
+    highlighted_rows: list[TransparencyRowReference] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -278,6 +295,84 @@ class HistoricalMLTransparencyService:
             negative_contributors=negative[:5],
             feature_snapshot=row.feature_values_json,
             skipped_reason=candidate_result.scoring_skipped_reason,
+        )
+
+    def explain_symbol_on_decision_date(
+        self,
+        *,
+        bundle_version: str,
+        symbol: str,
+        decision_date: str,
+    ) -> TransparencyExplanation:
+        _, manifest = self._load_manifest(bundle_version)
+        dataset_version = str(cast(dict[str, object], manifest.get("dataset", {})).get("dataset_version", ""))
+        row = self._session.scalar(
+            select(TrainingDatasetRow).where(
+                TrainingDatasetRow.dataset_version == dataset_version,
+                TrainingDatasetRow.symbol == symbol.upper(),
+                TrainingDatasetRow.decision_date == date.fromisoformat(decision_date),
+            )
+        )
+        if row is None:
+            raise ValueError(f"unknown symbol/decision_date for bundle {bundle_version}: {symbol} {decision_date}")
+        return self.explain_historical_row(bundle_version=bundle_version, row_key=row.row_key)
+
+    def get_strategy_learning_panel(
+        self,
+        *,
+        bundle_version: str,
+        runtime_control: HistoricalMLRuntimeControlSummary | None = None,
+        row_limit: int = 5,
+    ) -> TransparencyStrategyLearningPanel:
+        overview = self.get_overview(bundle_version=bundle_version, row_limit=row_limit)
+        rows = list(
+            self._session.scalars(
+                select(TrainingDatasetRow).where(
+                    TrainingDatasetRow.dataset_version == overview.model.dataset_version,
+                    TrainingDatasetRow.strategy_name == overview.model.strategy_name,
+                )
+            )
+        )
+        base_scores: list[float] = []
+        label_hits = 0
+        symbols: set[str] = set()
+        decision_dates: list[date] = []
+        for row in rows:
+            symbols.add(row.symbol)
+            decision_dates.append(row.decision_date)
+            value = row.metadata_json.get("base_score")
+            if isinstance(value, int | float):
+                base_scores.append(float(value))
+            label_payload = row.label_values_json
+            label_value = label_payload.get("label_primary")
+            if isinstance(label_value, bool):
+                label_hits += int(label_value)
+            elif isinstance(label_value, int | float):
+                label_hits += int(float(label_value) > 0)
+
+        summary: dict[str, object] = {
+            "rows_total": len(rows),
+            "symbols_total": len(symbols),
+            "positive_label_rate": (label_hits / len(rows)) if rows else None,
+            "average_base_score": (sum(base_scores) / len(base_scores)) if base_scores else None,
+            "decision_date_start": min(decision_dates).isoformat() if decision_dates else None,
+            "decision_date_end": max(decision_dates).isoformat() if decision_dates else None,
+            "runtime_context": runtime_control.effective_mode if runtime_control is not None else None,
+            "ranking_policy": runtime_control.ranking_policy if runtime_control is not None else None,
+            "guardrail_codes": runtime_control.reason_codes if runtime_control is not None else [],
+            "drift_flagged_feature_count": sum(1 for item in overview.drift_signals if item.drift_flagged),
+        }
+        return TransparencyStrategyLearningPanel(
+            bundle_version=bundle_version,
+            model_version=overview.model.model_version,
+            dataset_version=overview.model.dataset_version,
+            strategy_name=overview.model.strategy_name,
+            runtime_control=runtime_control,
+            summary=summary,
+            global_feature_importance=overview.global_feature_importance[:5],
+            regime_feature_importance=overview.regime_feature_importance[:5],
+            drift_signals=overview.drift_signals[:5],
+            highlighted_rows=overview.sample_rows[:row_limit],
         )
 
     def _load_manifest(self, bundle_version: str) -> tuple[Path, dict[str, object]]:
