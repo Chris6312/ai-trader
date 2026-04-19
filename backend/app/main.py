@@ -15,7 +15,6 @@ from app.market_data.tradier import TradierMarketDataAdapter
 from app.services.historical.ai_scheduler import AIResearchSchedulerService
 from app.services.market_data import MarketDataService
 from app.services.market_data_runtime import MarketDataRuntimeService
-from app.services.paper_accounts import PaperAccountService
 from app.workers.candle_worker import CandleWorker
 
 settings = get_settings()
@@ -43,8 +42,6 @@ def _build_candle_worker() -> CandleWorker:
     )
 
 
-
-
 def _build_ai_research_scheduler() -> AIResearchSchedulerService:
     return AIResearchSchedulerService(
         timezone_name=settings.app_timezone,
@@ -70,6 +67,7 @@ def _ai_research_status(app: FastAPI) -> dict[str, object]:
         }
     )
     return status
+
 
 def _market_data_status(app: FastAPI) -> dict[str, object]:
     worker = getattr(app.state, "candle_worker", None)
@@ -105,7 +103,7 @@ def _market_data_status(app: FastAPI) -> dict[str, object]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.paper_account_service = PaperAccountService(db_session_factory=SessionLocal)
+    app.state.paper_account_service = None
     app.state.candle_worker = None
     app.state.candle_worker_task = None
     app.state.ai_research_scheduler = None
@@ -128,10 +126,12 @@ async def lifespan(app: FastAPI):
         worker_task = getattr(app.state, "candle_worker_task", None)
         scheduler = getattr(app.state, "ai_research_scheduler", None)
         scheduler_task = getattr(app.state, "ai_research_scheduler_task", None)
+
         if worker is not None:
             worker.stop()
         if scheduler is not None:
             scheduler.stop()
+
         if worker_task is not None:
             await worker_task
         if scheduler_task is not None:
@@ -170,6 +170,7 @@ def health() -> dict[str, str]:
 @app.get("/api/market-data/worker-status")
 def market_data_worker_status() -> dict[str, object]:
     return _market_data_status(app)
+
 
 @app.get("/api/ai/scheduler-status")
 def ai_research_scheduler_status() -> dict[str, object]:

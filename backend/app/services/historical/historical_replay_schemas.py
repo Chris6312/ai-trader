@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -12,7 +12,12 @@ class HistoricalReplayPolicy:
     policy_version: str
     max_hold_bars: int
     target_r_multiple: Decimal
-    supported_strategies: tuple[str, ...]
+    supported_strategies: tuple[str, ...] = field(
+        default_factory=lambda: (
+            "pullback_reclaim",
+            "trend_continuation",
+        )
+    )
 
 
 @dataclass(slots=True)

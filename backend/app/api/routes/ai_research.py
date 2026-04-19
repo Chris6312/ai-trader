@@ -11,6 +11,8 @@ from app.models import AssetClass
 from app.models.ai_research import RegimeSnapshot, SentimentSnapshot, TechnicalSnapshot, UniverseSnapshot
 from app.schemas.ai_research_api import (
     AISnapshotInspectionOut,
+    MLBundleBuildOut,
+    MLBundleBuildRequest,
     MLDeploymentActionOut,
     MLDeploymentActionRequest,
     MLDeploymentAuditEventOut,
@@ -33,10 +35,13 @@ from app.schemas.ai_research_api import (
     UniverseSnapshotListOut,
     UniverseSnapshotOut,
 )
+from app.schemas.stock_backfill_api import StockBackfillPolicyOut
 from app.services.historical.historical_ml_deployment_safety import HistoricalMLDeploymentSafetyService
 from app.services.historical.historical_ml_runtime_controls import HistoricalMLRuntimeControlService
+from app.services.historical.stock_backfill_policy import StockBackfillPolicyService
 from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig
 from app.services.historical.historical_ml_transparency import HistoricalMLTransparencyService
+from app.services.historical.historical_ml_bundle_builder import HistoricalMLBundleBuilderService
 
 router = APIRouter(prefix="/api/ai", tags=["ai-research"])
 
@@ -175,6 +180,51 @@ def get_latest_universe_rows(
         asset_class=asset_class or latest_row.asset_class,
     )
 
+
+
+
+@router.get("/backfill/stocks/policy", response_model=StockBackfillPolicyOut)
+def get_stock_backfill_policy() -> StockBackfillPolicyOut:
+    policy = StockBackfillPolicyService().resolve_default_policy()
+    return StockBackfillPolicyOut(
+        policy_version=policy.policy_version,
+        policy_name=policy.policy_name,
+        asset_class=policy.asset_class,
+        symbol_source=policy.symbol_source,
+        max_symbols_per_run=policy.max_symbols_per_run,
+        max_parallel_fetches=policy.max_parallel_fetches,
+        timeframes={
+            timeframe: {
+                "timeframe": record.timeframe,
+                "lookback_days": record.lookback_days,
+                "lookback_label": record.lookback_label,
+            }
+            for timeframe, record in policy.timeframes.items()
+        },
+    )
+
+
+
+@router.post("/ml/bundles/build", response_model=MLBundleBuildOut)
+def build_ml_bundle(
+    body: MLBundleBuildRequest,
+    db: Session = Depends(get_db),
+) -> MLBundleBuildOut:
+    service = HistoricalMLBundleBuilderService(db)
+    try:
+        summary = service.build_bundle(
+            dataset_version=body.dataset_version,
+            strategy_name=body.strategy_name,
+            source_label=body.source_label,
+            asset_class=body.asset_class,
+            timeframe=body.timeframe,
+            include_drift_review=body.include_drift_review,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = status.HTTP_409_CONFLICT if detail.startswith("bundle build skipped:") else status.HTTP_404_NOT_FOUND
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return MLBundleBuildOut(**asdict(summary))
 
 @router.get("/ml/deployment/state", response_model=MLDeploymentStateOut)
 def get_ml_deployment_state(

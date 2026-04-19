@@ -20,6 +20,7 @@ from app.services.historical.historical_baseline_model_schemas import (
     BaselineModelHyperparameters,
     BaselineModelTrainingSummary,
 )
+from app.services.historical.historical_ml_training_utils import build_balanced_sample_weight
 
 
 class HistoricalBaselineModelService:
@@ -120,11 +121,12 @@ class HistoricalBaselineModelService:
             min_samples_leaf=self._hyperparameters.min_samples_leaf,
             random_state=self._hyperparameters.random_state,
         )
-        model.fit(X, y)
+        sample_weight = build_balanced_sample_weight(y)
+        model.fit(X, y, sample_weight=sample_weight)
 
         predicted = model.predict(X)
         probability = model.predict_proba(X)[:, 1]
-        metrics = {
+        train_metrics = {
             "accuracy": float(accuracy_score(y, predicted)),
             "precision": float(precision_score(y, predicted, zero_division=0)),
             "recall": float(recall_score(y, predicted, zero_division=0)),
@@ -152,7 +154,11 @@ class HistoricalBaselineModelService:
             training_window_start=version.start_date.isoformat(),
             training_window_end=version.end_date.isoformat(),
             hyperparameters=asdict(self._hyperparameters),
-            metrics=metrics,
+            train_metrics=train_metrics,
+            evaluation_notes=[
+                "train_metrics_are_in_sample_only",
+                "use_walkforward_validation_for_promotion_and_model_health",
+            ],
             artifact_path=str(artifact_path),
             trained_at=version.created_at,
         )
@@ -175,7 +181,7 @@ class HistoricalBaselineModelService:
             negative_rows=negative_rows,
             label_key=label_key,
             feature_keys=feature_keys,
-            metrics=metrics,
+            metrics=train_metrics,
             artifact_path=str(artifact_path),
         )
 

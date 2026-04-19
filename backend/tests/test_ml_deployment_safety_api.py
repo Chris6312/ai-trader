@@ -98,7 +98,8 @@ def _write_bundle(bundle_version: str) -> None:
         training_window_start="2026-04-01",
         training_window_end="2026-04-04",
         hyperparameters={"random_state": 42},
-        metrics={"roc_auc": 0.81},
+        train_metrics={"roc_auc": 0.81},
+        evaluation_notes=["train_metrics_are_in_sample_only"],
         artifact_path=str(bundle_path / "model_artifact.joblib"),
         trained_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
     )

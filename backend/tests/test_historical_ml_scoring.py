@@ -171,6 +171,9 @@ def test_ml_scoring_reranks_eligible_candidates_with_probability_blend() -> None
     assert summary.candidates[0].combined_score > summary.candidates[1].combined_score
     assert summary.candidates[0].explanation
 
+    contributions = [item.signed_contribution for item in summary.candidates[0].explanation]
+    assert any(abs(value) > 0 for value in contributions)
+
 
 def test_ml_scoring_does_not_promote_ineligible_or_incomplete_candidates() -> None:
     session = _build_session()

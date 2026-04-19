@@ -15,6 +15,7 @@ from app.services.historical.historical_ml_bundle_inspector import HistoricalMLB
 from app.services.historical.historical_ml_runtime_controls_schemas import HistoricalMLRuntimeControlConfig, HistoricalMLRuntimeControlSummary
 from app.services.historical.historical_ml_scoring_schemas import MLScoringCandidateInput
 
+
 if TYPE_CHECKING:
     from app.services.historical.historical_ml_scoring import HistoricalMLScoringService
 
@@ -449,14 +450,23 @@ class HistoricalMLTransparencyService:
         validation_ref = self._find_reference(references, "walkforward_validation")
         drift_ref = self._find_reference(references, "feature_drift_review")
         scoring_ref = self._find_reference(references, "scoring_profile")
-        artifact_status = self._bundle_inspector.resolve_model_artifact_status(manifest=manifest, manifest_path=manifest_path, allow_missing=True)
+
+        bundle_version = str(manifest.get("bundle_version", manifest_path.parent.name))
+        strategy_name = str(training_summary.get("strategy_name", ""))
+
+        artifact_status = self._bundle_inspector.resolve_model_artifact_status(
+            manifest=manifest,
+            manifest_path=manifest_path,
+            allow_missing=True,
+        )
+
         return TransparencyModelRecord(
-            bundle_version=str(manifest.get("bundle_version", manifest_path.parent.name)),
+            bundle_version=bundle_version,
             bundle_name=str(manifest.get("bundle_name", "baseline_model_bundle")),
             model_version=str(training_summary.get("model_version", "")),
             model_family=str(training_summary.get("model_family", "")),
             dataset_version=str(cast(dict[str, object], manifest.get("dataset", {})).get("dataset_version", "")),
-            strategy_name=str(training_summary.get("strategy_name", "")),
+            strategy_name=strategy_name,
             label_key=str(training_summary.get("label_key", "")),
             feature_count=len(cast(list[object], training_summary.get("feature_keys", []))),
             manifest_path=str(manifest_path),

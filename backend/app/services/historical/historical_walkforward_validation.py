@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.ai_research import TrainingDatasetRow, TrainingDatasetVersion
 from app.services.historical.historical_baseline_model_schemas import BaselineModelHyperparameters
+from app.services.historical.historical_ml_training_utils import build_balanced_sample_weight
 from app.services.historical.historical_walkforward_validation_schemas import (
     HistoricalWalkForwardValidationConfig,
     HistoricalWalkForwardValidationSummary,
@@ -230,7 +231,8 @@ class HistoricalWalkForwardValidationService:
             min_samples_leaf=self._hyperparameters.min_samples_leaf,
             random_state=self._hyperparameters.random_state,
         )
-        model.fit(X, y)
+        sample_weight = build_balanced_sample_weight(y)
+        model.fit(X, y, sample_weight=sample_weight)
         return model
 
     def _feature_key_is_usable(self, rows: list[TrainingDatasetRow], key: str) -> bool:

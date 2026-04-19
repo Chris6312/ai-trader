@@ -50,11 +50,16 @@ from app.services.historical.historical_baseline_model_schemas import (
     BaselineModelTrainingSummary,
 )
 from app.services.historical.historical_universe_snapshot import HistoricalUniverseSnapshotService
+from app.services.historical.stock_backfill_policy import StockBackfillPolicyService
 from app.services.historical.feature_schemas import FeatureBuildSummary, HistoricalFeatureRecord
 from app.services.historical.historical_replay_schemas import (
     HistoricalReplayPolicy,
     HistoricalReplayRecord,
     HistoricalReplaySummary,
+)
+from app.services.historical.stock_backfill_policy_schemas import (
+    StockBackfillPolicy,
+    StockBackfillTimeframePolicy,
 )
 from app.services.historical.historical_backtesting_policy_schemas import (
     BacktestingPolicyVersionRecord,
@@ -231,6 +236,9 @@ __all__ = [
     "SentimentScoreSummary",
     "SentimentScoringService",
     "SnapshotPersistenceSummary",
+    "StockBackfillPolicy",
+    "StockBackfillPolicyService",
+    "StockBackfillTimeframePolicy",
     "TechnicalScoreRecord",
     "TechnicalScoreSummary",
     "TechnicalScoringService",

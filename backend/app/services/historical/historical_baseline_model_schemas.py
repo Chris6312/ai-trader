@@ -9,8 +9,9 @@ class BaselineModelHyperparameters:
     n_estimators: int = 100
     learning_rate: float = 0.05
     max_depth: int = 3
-    min_samples_leaf: int = 1
+    min_samples_leaf: int = 2
     random_state: int = 42
+    class_balance_mode: str = "balanced"
 
 
 @dataclass(slots=True)
@@ -27,9 +28,10 @@ class BaselineModelArtifactRecord:
     training_window_start: str
     training_window_end: str
     hyperparameters: dict[str, object]
-    metrics: dict[str, float]
-    artifact_path: str
-    trained_at: datetime | None
+    train_metrics: dict[str, float]
+    evaluation_notes: list[str] = field(default_factory=list)
+    artifact_path: str = ""
+    trained_at: datetime | None = None
 
 
 @dataclass(slots=True)

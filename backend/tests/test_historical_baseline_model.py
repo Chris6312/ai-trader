@@ -95,6 +95,8 @@ def test_historical_baseline_model_trains_and_writes_artifact() -> None:
         assert artifact["artifact"].dataset_version == "12f_v1_seed"
         assert artifact["artifact"].strategy_name == "momentum"
         assert artifact["artifact"].feature_keys == ["close_vs_sma_20", "volume_ratio_5"]
+        assert artifact["artifact"].train_metrics["roc_auc"] >= 0.0
+        assert "train_metrics_are_in_sample_only" in artifact["artifact"].evaluation_notes
 
 
 def test_historical_baseline_model_skips_single_class_dataset() -> None:

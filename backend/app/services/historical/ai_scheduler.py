@@ -47,10 +47,12 @@ class AIResearchSchedulerService:
         self._next_scheduled_run_at: datetime | None = None
         self._running = False
         self._stop_requested = False
+        self._stop_event = asyncio.Event()
 
     async def run(self) -> None:
         self._running = True
         self._stop_requested = False
+        self._stop_event.clear()
         try:
             while not self._stop_requested:
                 decision = self.evaluate(self.now())
@@ -58,13 +60,17 @@ class AIResearchSchedulerService:
                 if decision.should_run:
                     await self._execute_run(reason=decision.reason)
                     continue
-                await asyncio.sleep(self._sleep_seconds)
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self._sleep_seconds)
+                except asyncio.TimeoutError:
+                    continue
         finally:
             self._running = False
             self._next_scheduled_run_at = None
 
     def stop(self) -> None:
         self._stop_requested = True
+        self._stop_event.set()
 
     def evaluate(self, now: datetime | None = None) -> AISchedulerDecision:
         current = self._coerce_utc(now or self.now())

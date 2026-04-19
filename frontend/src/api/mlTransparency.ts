@@ -95,6 +95,36 @@ export interface MLTransparencyExplanation {
   skipped_reason: string | null
 }
 
+
+
+export interface MLBundleBuildRequest {
+  dataset_version?: string | null
+  strategy_name?: string | null
+  source_label?: string | null
+  asset_class?: string | null
+  timeframe?: string | null
+  include_drift_review?: boolean
+}
+
+export interface MLBundleBuildSummary {
+  bundle_version: string
+  bundle_name: string
+  dataset_version: string
+  strategy_name: string
+  model_version: string
+  validation_version: string | null
+  drift_report_version: string | null
+  manifest_path: string
+  model_artifact_path: string | null
+  verified_bundle: boolean
+  notes: string[]
+}
+
+export async function buildMlBundle(payload: MLBundleBuildRequest): Promise<MLBundleBuildSummary> {
+  const response = await apiClient.post<MLBundleBuildSummary>('/api/ai/ml/bundles/build', payload)
+  return response.data
+}
+
 export async function fetchMlModelRegistry(): Promise<MLTransparencyModelRecord[]> {
   const response = await apiClient.get<{ rows: MLTransparencyModelRecord[] }>('/api/ai/ml/models')
   return response.data.rows

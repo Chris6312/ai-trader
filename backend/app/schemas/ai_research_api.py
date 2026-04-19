@@ -137,6 +137,30 @@ class MLDeploymentStateOut(BaseModel):
     change_history: list[MLDeploymentAuditEventOut]
 
 
+
+
+class MLBundleBuildRequest(BaseModel):
+    dataset_version: str | None = None
+    strategy_name: str | None = None
+    source_label: str | None = None
+    asset_class: AssetClass | None = None
+    timeframe: str | None = None
+    include_drift_review: bool = True
+
+
+class MLBundleBuildOut(BaseModel):
+    bundle_version: str
+    bundle_name: str
+    dataset_version: str
+    strategy_name: str
+    model_version: str
+    validation_version: str | None = None
+    drift_report_version: str | None = None
+    manifest_path: str
+    model_artifact_path: str | None = None
+    verified_bundle: bool
+    notes: list[str]
+
 class MLDeploymentActionRequest(BaseModel):
     actor: str
     notes: str | None = None

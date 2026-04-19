@@ -45,6 +45,10 @@ class HistoricalStrategyReplayService:
         self._risk_service = risk_service or DeterministicRiskApprovalService()
         self._policy = policy or HistoricalReplayPolicy(
             policy_version="12c_policy_v1",
+            supported_strategies=[
+                "pullback_reclaim",
+                "trend_continuation",
+            ],
             target_r_multiple=Decimal("2"),
             max_hold_bars=5,
         )

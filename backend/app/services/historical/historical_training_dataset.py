@@ -286,6 +286,8 @@ class HistoricalTrainingDatasetService:
             feature_version=feature_version,
             replay_version=resolved_policy.replay_policy_version,
             label_version=resolved_policy.label_version,
+            source_label=source_label,
+            strategy_name=strategy_name,
             start_date=start_date,
             end_date=end_date,
             rows_considered=len(replay_rows),

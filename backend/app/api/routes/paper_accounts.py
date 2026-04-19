@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.brokers import BrokerError, OrderNotFoundError
+from app.db.session import SessionLocal
 from app.models import AssetClass, OrderStatus
 from app.schemas.paper_api import (
     AccountSummaryResponse,
@@ -18,7 +19,11 @@ router = APIRouter(prefix="/api/paper", tags=["paper-accounts"])
 
 
 def get_paper_account_service(request: Request) -> PaperAccountService:
-    return request.app.state.paper_account_service
+    service = getattr(request.app.state, "paper_account_service", None)
+    if service is None:
+        service = PaperAccountService(db_session_factory=SessionLocal)
+        request.app.state.paper_account_service = service
+    return service
 
 
 @router.get("/{asset_class}/summary", response_model=AccountSummaryResponse)

@@ -24,7 +24,19 @@ from app.services.historical.historical_ml_scoring_schemas import (
 )
 
 
+class _FallbackTreeExplainer:
+    def __init__(self, *, feature_importances: np.ndarray, training_matrix: np.ndarray) -> None:
+        self._feature_importances = feature_importances
+        self._baseline = np.mean(training_matrix, axis=0) if training_matrix.size else np.zeros(len(feature_importances))
+
+    def shap_values(self, feature_vector: np.ndarray, check_additivity: bool = False) -> np.ndarray:
+        del check_additivity
+        return np.asarray((feature_vector[0] - self._baseline) * self._feature_importances, dtype=float).reshape(1, -1)
+
+
 class HistoricalMLScoringService:
+    _SHAP_EXPLAINER_CACHE: dict[tuple[str, int, tuple[str, ...]], Any] = {}
+
     def __init__(
         self,
         session: Session,
@@ -163,6 +175,50 @@ class HistoricalMLScoringService:
             runtime_control_config=runtime_control_config,
         )
 
+    def _build_training_matrix(
+        self,
+        *,
+        training_rows: list[TrainingDatasetRow],
+        feature_keys: list[str],
+    ) -> np.ndarray:
+        matrix: list[list[float]] = []
+        for row in training_rows:
+            vector: list[float] = []
+            for key in feature_keys:
+                value = row.feature_values_json.get(key)
+                if value is None:
+                    break
+                try:
+                    vector.append(float(value))
+                except (TypeError, ValueError):
+                    break
+            if len(vector) == len(feature_keys):
+                matrix.append(vector)
+        if not matrix:
+            return np.zeros((0, len(feature_keys)), dtype=float)
+        return np.asarray(matrix, dtype=float)
+
+    def _get_shap_explainer(
+        self,
+        *,
+        model: Any,
+        feature_keys: list[str],
+        training_matrix: np.ndarray,
+    ) -> Any:
+        model_family = type(model).__name__
+        cache_key = (model_family, id(model), tuple(feature_keys))
+        cached = self._SHAP_EXPLAINER_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        explainer = _FallbackTreeExplainer(
+            feature_importances=np.asarray(getattr(model, "feature_importances_", np.ones(len(feature_keys)))),
+            training_matrix=training_matrix,
+        )
+
+        self._SHAP_EXPLAINER_CACHE[cache_key] = explainer
+        return explainer
+
     def score_candidates(
         self,
         *,
@@ -204,6 +260,10 @@ class HistoricalMLScoringService:
             training_rows=training_rows,
             feature_keys=feature_keys,
         )
+        training_matrix = self._build_training_matrix(
+            training_rows=training_rows,
+            feature_keys=feature_keys,
+        )
 
         runtime_summary = None
         if bundle_version is not None:
@@ -220,6 +280,14 @@ class HistoricalMLScoringService:
         ml_influence_allowed = runtime_summary.ml_influence_allowed if runtime_summary is not None else True
         ml_scoring_allowed = runtime_summary.ml_scoring_allowed if runtime_summary is not None else True
         runtime_reason_codes = list(runtime_summary.reason_codes) if runtime_summary is not None else []
+
+        shap_explainer = None
+        if ml_scoring_allowed and candidates:
+            shap_explainer = self._get_shap_explainer(
+                model=model,
+                feature_keys=feature_keys,
+                training_matrix=training_matrix,
+            )
 
         for candidate in candidates:
             skipped_reason = self._resolve_skip_reason(
@@ -293,6 +361,7 @@ class HistoricalMLScoringService:
                 feature_keys=feature_keys,
                 feature_baselines=feature_baselines,
                 feature_importances=np.asarray(model.feature_importances_, dtype=float),
+                shap_explainer=shap_explainer,
             )
 
             if ml_influence_allowed:
@@ -409,6 +478,20 @@ class HistoricalMLScoringService:
             baselines[key] = float(np.mean(values)) if values else 0.0
         return baselines
 
+    def _normalize_shap_values(self, raw_shap_values: Any) -> np.ndarray:
+        if isinstance(raw_shap_values, list):
+            shap_values = np.asarray(raw_shap_values[-1], dtype=float)
+        else:
+            shap_values = np.asarray(raw_shap_values, dtype=float)
+
+        if shap_values.ndim == 3:
+            shap_values = shap_values[-1]
+
+        if shap_values.ndim != 2 or shap_values.shape[0] != 1:
+            raise ValueError("unexpected SHAP value shape for binary classifier explanation")
+
+        return shap_values
+
     def _build_explanation(
         self,
         *,
@@ -416,13 +499,21 @@ class HistoricalMLScoringService:
         feature_keys: list[str],
         feature_baselines: dict[str, float],
         feature_importances: np.ndarray,
+        shap_explainer: Any,
     ) -> list[MLScoreExplanationRecord]:
+        feature_vector = np.asarray(
+            [[float(candidate.feature_values[key]) for key in feature_keys]],
+            dtype=float,
+        )
+        raw_shap_values = shap_explainer.shap_values(feature_vector, check_additivity=False)
+        shap_values = self._normalize_shap_values(raw_shap_values)
+
         records: list[MLScoreExplanationRecord] = []
         for index, feature_key in enumerate(feature_keys):
             feature_value = float(candidate.feature_values[feature_key])
             baseline_value = float(feature_baselines.get(feature_key, 0.0))
             importance_weight = float(feature_importances[index])
-            signed_contribution = float((feature_value - baseline_value) * importance_weight)
+            signed_contribution = float(shap_values[0][index])
             records.append(
                 MLScoreExplanationRecord(
                     feature_key=feature_key,

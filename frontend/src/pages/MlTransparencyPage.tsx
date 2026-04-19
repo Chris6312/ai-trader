@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, CircleGauge, FlaskConical } from 'lucide-react'
 
 import {
+  buildMlBundle,
   fetchMlExplanation,
   fetchMlExplanationBySymbolDate,
   fetchMlFeatureHealthPanel,
@@ -24,6 +25,7 @@ type MlExplanation = Awaited<ReturnType<typeof fetchMlExplanation>>
 type MlRuntimeControl = Awaited<ReturnType<typeof fetchMlRuntimeControl>>
 type MlStrategyLearningPanel = Awaited<ReturnType<typeof fetchMlStrategyLearningPanel>>
 type MlFeatureHealthPanel = Awaited<ReturnType<typeof fetchMlFeatureHealthPanel>>
+type MlBundleBuildSummary = Awaited<ReturnType<typeof buildMlBundle>>
 
 type FeatureRecord = {
   feature_key: string
@@ -181,9 +183,14 @@ function FeatureListCard({
 }
 
 export function MlTransparencyPage() {
+  const queryClient = useQueryClient()
   const [selectedBundleVersion, setSelectedBundleVersion] = useState('')
   const [selectedRowKey, setSelectedRowKey] = useState('')
   const [requestedRuntimeMode, setRequestedRuntimeMode] = useState('active_rank_only')
+  const [buildDatasetVersion, setBuildDatasetVersion] = useState('')
+  const [buildStrategyName, setBuildStrategyName] = useState('momentum')
+  const [includeDriftReview, setIncludeDriftReview] = useState(true)
+  const [buildResult, setBuildResult] = useState<MlBundleBuildSummary | null>(null)
   const [isHistoricalRowMenuOpen, setIsHistoricalRowMenuOpen] = useState(false)
   const historicalRowMenuRef = useRef<HTMLDivElement | null>(null)
 
@@ -191,6 +198,24 @@ export function MlTransparencyPage() {
     queryKey: ['ml-model-registry'],
     queryFn: fetchMlModelRegistry,
     refetchInterval: 30_000,
+  })
+
+  const buildBundleMutation = useMutation({
+    mutationFn: () =>
+      buildMlBundle({
+        dataset_version: buildDatasetVersion.trim() || undefined,
+        strategy_name: buildStrategyName.trim() || undefined,
+        include_drift_review: includeDriftReview,
+      }),
+    onSuccess: async (summary) => {
+      setBuildResult(summary)
+      setSelectedBundleVersion(summary.bundle_version)
+      setSelectedRowKey('')
+      await queryClient.invalidateQueries({ queryKey: ['ml-model-registry'] })
+      await queryClient.invalidateQueries({ queryKey: ['ml-overview'] })
+      await queryClient.invalidateQueries({ queryKey: ['ml-rows'] })
+      await queryClient.invalidateQueries({ queryKey: ['ml-runtime'] })
+    },
   })
 
   const modelRows = (registryQuery.data ?? []) as ModelRegistryRow[]
@@ -444,6 +469,69 @@ export function MlTransparencyPage() {
                     <option value="active_rank_only">Active rank only</option>
                   </select>
                 </label>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="eyebrow">Live bundle trigger</p>
+                    <h3 className="text-lg font-semibold text-slate-50">Build and persist a bundle for this page</h3>
+                    <p className="muted mt-1">Leave dataset version blank to use the latest matching training dataset.</p>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3">
+                  <label className="block min-w-0">
+                    <span className="mb-2 block text-sm text-slate-300">Dataset version</span>
+                    <input
+                      value={buildDatasetVersion}
+                      onChange={(event) => setBuildDatasetVersion(event.target.value)}
+                      className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+                      placeholder="latest matching dataset"
+                    />
+                  </label>
+                  <label className="block min-w-0">
+                    <span className="mb-2 block text-sm text-slate-300">Strategy name</span>
+                    <input
+                      value={buildStrategyName}
+                      onChange={(event) => setBuildStrategyName(event.target.value)}
+                      className="block w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500"
+                      placeholder="momentum"
+                    />
+                  </label>
+                  <label className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-800 px-4 py-3 text-sm text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={includeDriftReview}
+                      onChange={(event) => setIncludeDriftReview(event.target.checked)}
+                    />
+                    Include drift review artifact
+                  </label>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={buildBundleMutation.isPending}
+                    onClick={() => buildBundleMutation.mutate()}
+                  >
+                    {buildBundleMutation.isPending ? 'Building bundle…' : 'Build live bundle'}
+                  </button>
+                  {buildResult ? (
+                    <span className={`status-pill ${buildResult.verified_bundle ? 'status-pill--good' : 'status-pill--warn'}`}>
+                      {buildResult.bundle_version}
+                    </span>
+                  ) : null}
+                  {buildBundleMutation.isError ? (
+                    <p className="muted break-words">
+                      {(buildBundleMutation.error as Error).message || 'Bundle build failed.'}
+                    </p>
+                  ) : null}
+                  {!buildBundleMutation.isError && buildResult ? (
+                    <p className="muted break-words">
+                      Persisted {buildResult.model_version} from {buildResult.dataset_version}.
+                    </p>
+                  ) : null}
+                </div>
               </div>
 
               <QueryState

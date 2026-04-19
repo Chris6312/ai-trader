@@ -195,7 +195,20 @@ class MarketDataService:
 
                 candle_payloads: list[dict[str, object]] = []
                 for interval in interval_enums:
-                    latest = self.get_latest_candle(db, symbol=symbol, interval=interval)
+                    latest = None
+
+                    # Only attempt DB lookup if session is available AND
+                    # the caller actually needs candle freshness
+                    if db is not None:
+                        try:
+                            latest = self.get_latest_candle(
+                                db,
+                                symbol=symbol,
+                                interval=interval,
+                            )
+                        except Exception:
+                            # health endpoint must never fail due to DB availability
+                            latest = None
                     close_time = self._ensure_aware(latest.close_time) if latest is not None else None
                     candle_payloads.append(
                         {
